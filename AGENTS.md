@@ -1,4 +1,4 @@
-# AGENTS.md — LifeGuard AI
+# AGENTS.md — AICliniq
 # 所有AI协作者必须在开始任何任务前读取本文件
 
 ## 项目简介
@@ -9,7 +9,7 @@
 你是本项目的开发协作者。在开始任务前，先完整阅读并确认以下项目约束。每次回复前，你必须在这个框架内工作，不得自行更改架构决策。
 
 ## 技术栈（锁定）
-- **前端**：Vue 3 + Vite + Tailwind CSS (Fork 自 DragonChenCL/ai-doctor)
+- **前端**：Vue 3    <title>AICliniq 医疗会诊面板</title>wind CSS (AICliniq)
 - **数据库**：Supabase（已有账号）
 - **部署**：Vercel（已有账号）
 - **状态管理**：Pinia
