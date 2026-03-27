@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { supabase } from '../services/supabase'
+import i18n from '../i18n'
 
 export const useUserStore = defineStore('user', () => {
   // --- State ---
@@ -136,15 +137,14 @@ export const useUserStore = defineStore('user', () => {
     error.value = null
 
     try {
-      const { error: authError } = await supabase.auth.signOut()
-      if (authError) throw authError
-
+      // Try to sign out from Supabase (may fail if network is down or session expired)
+      await supabase.auth.signOut()
+    } catch (err) {
+      console.warn('[UserStore] Supabase signOut error:', err)
+    } finally {
+      // ALWAYS clear local state regardless of server result
       user.value = null
       profile.value = null
-    } catch (err) {
-      error.value = err.message
-      throw err
-    } finally {
       loading.value = false
     }
   }
@@ -168,8 +168,29 @@ export const useUserStore = defineStore('user', () => {
       }
 
       profile.value = data || null
+      // Sync i18n locale with user preference on load
+      if (data?.preferred_language) {
+        i18n.global.locale.value = data.preferred_language
+      }
     } catch (err) {
       console.error('[LifeGuard] Fetch profile failed:', err)
+    }
+  }
+
+  /**
+   * Set user preferred language, updating i18n locale and Supabase profile
+   */
+  async function setLanguage(lang) {
+    if (i18n.global.locale.value === lang) return
+    i18n.global.locale.value = lang
+    
+    // Only persist if user is fully logged in and has a profile row
+    if (user.value && profile.value) {
+      try {
+        await updateProfile({ preferred_language: lang })
+      } catch (err) {
+        console.error('[UserStore] Failed to persist preferredLanguage:', err)
+      }
     }
   }
 
@@ -218,6 +239,7 @@ export const useUserStore = defineStore('user', () => {
     signup,
     logout,
     fetchProfile,
-    updateProfile
+    updateProfile,
+    setLanguage
   }
 })

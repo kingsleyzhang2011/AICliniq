@@ -10,7 +10,7 @@ const routes = [
     path: '/home',
     name: 'Home',
     component: () => import('../views/HomeView.vue'),
-    meta: { requiresAuth: true }
+    meta: { public: true }
   },
   {
     path: '/chat',

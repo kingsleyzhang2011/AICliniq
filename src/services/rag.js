@@ -1,54 +1,55 @@
 import { supabase } from './supabase.js'
 
-const model = "gemini-embedding-2-preview";
-const GEMINI_EMBEDDING_URL = 
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`
+// --- Voyage AI Configuration ---
+const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
+const VOYAGE_MODEL = "voyage-3"; // 1024 dimensions
 
 /**
- * RAG 核心：永远使用 Gemini 进行向量化（受控于 768 维度）
+ * RAG 核心：使用 Voyage AI 进行向量化（1024 维度）
  */
 export async function embedText(textToEmbed) {
-  // 增加对 Node.js 脚本的兼容性
   let apiKey = ''
   try {
-    apiKey = import.meta.env?.VITE_GEMINI_KEY
+    // 适配 Vite 环境变量
+    apiKey = import.meta.env?.VITE_VOYAGE_API_KEY
   } catch (e) { }
 
   if (!apiKey && typeof process !== 'undefined') {
-    apiKey = process.env.VITE_GEMINI_KEY
+    // 适配 Node.js 环境（如数据导入脚本）
+    apiKey = process.env.VITE_VOYAGE_API_KEY
   }
   
   if (!apiKey) {
-    console.warn('[RAG] Gemini API Key is missing, skipping embedding.')
+    console.warn('[RAG] Voyage API Key is missing, skipping embedding.')
     return null
   }
 
   try {
-    const response = await fetch(`${GEMINI_EMBEDDING_URL}?key=${apiKey}`, {
+    const response = await fetch(VOYAGE_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
       body: JSON.stringify({
-        content: {
-          parts: [{ text: textToEmbed }]
-        },
-        // 【核心救命符】gemini-embedding-001 默认是 3072 维
-        // 你的数据库（如 Supabase）如果是按旧版 004 设置的 768 维，不加这行会存不进去
-        outputDimensionality: 768 
+        input: [textToEmbed], // Must be an array
+        model: VOYAGE_MODEL
       })
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      const errorMsg = data.error?.message || 'Unknown error'
-      throw new Error(`[RAG API Error] Status: ${response.status}, Msg: ${errorMsg}`);
+      const errorMsg = data.detail || 'Unknown error'
+      throw new Error(`[Voyage API Error] Status: ${response.status}, Msg: ${errorMsg}`);
     }
 
-    return data.embedding.values;
+    // Voyage returns: { data: [{ embedding: [...], index: 0 }], model: "...", usage: {...} }
+    return data.data?.[0]?.embedding || null;
 
   } catch (error) {
     console.error("[RAG Terminal Error]:", error);
-    return null; // 保持原有接口习惯，外部调用期望 null 以跳过
+    return null;
   }
 }
 
@@ -58,9 +59,11 @@ export async function retrieveKnowledge(symptoms, language = 'zh', topK = 3) {
     const embedding = await embedText(symptoms)
     if (!embedding) return []
     
+    // 注意：匹配函数 match_documents 内部使用的是向量余弦相似度
+    // 维度必须匹配数据库中的 vector(1024)
     const { data, error } = await supabase.rpc('match_documents', {
       query_embedding: embedding,
-      match_threshold: 0.5, // 用户要求的 0.5
+      match_threshold: 0.5, 
       match_count: topK
     })
     

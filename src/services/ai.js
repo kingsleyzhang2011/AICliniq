@@ -289,16 +289,20 @@ export const DOCTOR_ROLES = {
  */
 export function buildSystemPrompt(roleKey, language = 'zh') {
   const role = DOCTOR_ROLES[roleKey] || DOCTOR_ROLES.general
-  const name = language === 'zh' ? role.name_zh : role.name_en
-  const focus = language === 'zh' ? role.focus_zh : role.focus_en
+  const isZh = language === 'zh'
   
-  const basePrompt = language === 'zh' 
-    ? `你是一位经验丰富的${name}。你的关注重点是：${focus}。请根据患者情况提供专业建议。`
-    : `You are an experienced ${name}. Your focus is: ${focus}. Please provide professional advice based on the patient's condition.`
+  const name = isZh ? role.name_zh : role.name_en
+  const focus = isZh ? role.focus_zh : role.focus_en
+  const tone = isZh ? role.tone_zh : role.tone_en
+  const langConstraint = isZh ? '【强制指令：你必须完全使用中文进行所有对话】' : '[MANDATORY: YOU MUST COMPLETELY USE ENGLISH FOR ALL RESPONSES]'
+  
+  const basePrompt = isZh 
+    ? `你是一位经验丰富的${name}。\n关注重点：${focus}\n语气设定：${tone}\n${langConstraint}\n请根据患者情况提供专业建议。`
+    : `You are an experienced ${name}.\nFocus: ${focus}\nTone: ${tone}\n${langConstraint}\nPlease provide professional advice based on the patient's condition.`
 
-  const disclaimer = language === 'zh'
+  const disclaimer = isZh
     ? '\n\n重要提示：本回复仅供健康参考，不构成医疗诊断或处方建议。如有任何不适或紧急情况，请立即就医或拨打急救电话。'
-    : '\n\nImportant: This response is for health reference only and does not constitute medical diagnosis or prescription advice. For any discomfort or emergency, please seek immediate medical attention.'
+    : '\n\nIMPORTANT: This response is for health reference only and does not constitute medical diagnosis or prescription advice. For any discomfort or emergency, please seek immediate medical attention or dial 911.'
 
   return basePrompt + disclaimer
 }

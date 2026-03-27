@@ -1,23 +1,16 @@
 import { createI18n } from 'vue-i18n'
+import zh from '../locales/zh'
+import en from '../locales/en'
 
-const messages = {
-  en: {
-    message: {
-      hello: 'hello world'
-    }
-  },
-  zh: {
-    message: {
-      hello: '你好世界'
-    }
-  }
-}
-
-const i18n = createI18n({
-  legacy: false, // use Composition API
-  locale: import.meta.env.VITE_DEFAULT_LOCALE || 'zh',
+// Create Vue I18n instance.
+export const i18n = createI18n({
+  legacy: false, // Use Composition API
+  locale: 'zh', // Try to get from localStorage or default to zh
   fallbackLocale: 'en',
-  messages,
+  messages: {
+    zh,
+    en
+  }
 })
 
 export default i18n

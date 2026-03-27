@@ -1,105 +1,303 @@
-<!-- src/views/HomeView.vue -->
 <template>
-  <div class="space-y-8 animate-fade-in">
-    
-    <!-- Welcome Header -->
-    <header class="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8 shadow-lg text-white">
-      <h1 class="text-3xl font-bold mb-2">欢迎回来，{{ userStore.displayName }} 👋</h1>
-      <p class="text-blue-100 max-w-2xl">
-        LifeGuard AI 是您的云端专属医疗会诊团队。上传您的化验单或直接发起问诊，多位顶尖 AI 专科医生将为您提供综合健康评估。
-      </p>
-    </header>
-
-    <!-- Quick Actions (Main features) -->
-    <section>
-      <h2 class="text-xl font-semibold text-gray-800 mb-4">快捷操作</h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+  <div class="bg-surface text-on-surface font-body selection:bg-primary-fixed selection:text-on-primary-fixed">
+    <!-- TopAppBar -->
+    <nav class="fixed top-0 w-full z-50 glass-nav transition-colors duration-500">
+      <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+        <div class="flex items-center gap-3 cursor-pointer" @click="handleNavigate('/home')">
+          <span class="material-symbols-outlined text-primary text-3xl" style="font-variation-settings: 'FILL' 1;">spa</span>
+          <span class="font-headline font-bold text-xl text-primary tracking-tighter">{{ $t('app.title') }}</span>
+        </div>
         
-        <!-- Action 1: OCR -->
-        <div 
-          @click="router.push('/ocr')"
-          class="group bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer relative overflow-hidden"
-        >
-          <div class="absolute -right-6 -top-6 bg-teal-50 w-24 h-24 rounded-full group-hover:scale-110 transition-transform"></div>
-          <div class="flex items-start gap-4 relative z-10">
-            <div class="bg-teal-100 p-3 rounded-xl text-teal-600">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <div>
-              <h3 class="text-lg font-bold text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">自动解读化验单</h3>
-              <p class="text-sm text-gray-500">
-                支持上传多页 PDF / 图片，Gemini 视觉大模型帮您提取指标，对比标准范围，指出异常项。
-              </p>
-            </div>
+        <!-- Desktop Nav -->
+        <div class="hidden md:flex items-center gap-10">
+          <a class="text-primary font-bold transition-all hover:text-primary-container cursor-pointer" @click="handleNavigate('/home')">{{ $t('app.home') }}</a>
+          <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/chat')">{{ $t('app.consult') }}</a>
+          <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/history')">{{ $t('app.records') }}</a>
+          <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/settings')">{{ $t('app.about') }}</a>
+        </div>
+
+        <div class="flex items-center gap-6">
+          <div class="flex bg-surface-container-high rounded-full p-1 items-center">
+            <button 
+              @click="userStore.setLanguage('zh')"
+              :class="locale === 'zh' ? 'bg-white text-primary shadow-sm font-bold' : 'text-outline font-medium'"
+              class="px-3 py-1 text-xs rounded-full transition-all"
+            >CN</button>
+            <button 
+              @click="userStore.setLanguage('en')"
+              :class="locale === 'en' ? 'bg-white text-primary shadow-sm font-bold' : 'text-outline font-medium'"
+              class="px-3 py-1 text-xs rounded-full transition-all"
+            >EN</button>
+          </div>
+          
+          <div v-if="userStore.isLoggedIn" class="flex items-center gap-4">
+            <span class="text-sm font-bold text-primary hidden sm:block">
+              {{ userStore.displayName }}
+            </span>
+            <button 
+              @click="handleLogout"
+              class="bg-surface-container-highest text-primary px-4 py-2 rounded-xl font-bold text-xs transition-all active:scale-[0.98] border border-outline-variant/30"
+            >
+              {{ $t('app.logout') }}
+            </button>
+          </div>
+          <button 
+            v-else
+            @click="handleNavigate('/chat')"
+            class="gradient-primary text-on-primary px-8 py-2.5 rounded-xl font-bold transition-all active:scale-[0.98] botanical-shadow"
+          >
+            {{ $t('app.login') }}
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="pt-24 overflow-x-hidden">
+      <!-- Prominent Disclaimer at Top -->
+      <section class="max-w-7xl mx-auto px-6 pt-8 pb-4">
+        <div class="bg-primary/5 border-2 border-primary/20 rounded-xl p-8 flex flex-col md:flex-row items-center gap-8 shadow-md">
+          <div class="flex-shrink-0 w-16 h-16 rounded-full bg-white flex items-center justify-center text-error border-2 border-error/20 shadow-lg animate-pulse">
+            <span class="material-symbols-outlined text-3xl font-bold">warning</span>
+          </div>
+          <div class="flex-grow text-center md:text-left">
+            <h2 class="text-primary font-extrabold text-2xl mb-2 flex items-center justify-center md:justify-start gap-2">
+              <span class="bg-error text-white text-[10px] px-2 py-0.5 rounded-sm uppercase tracking-tighter">{{ $t('disclaimer.tag') }}</span>
+              {{ $t('disclaimer.title') }}
+            </h2>
+            <p class="text-outline text-md font-medium leading-relaxed italic pr-4" v-html="$t('disclaimer.content')"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hero Section -->
+      <section class="max-w-7xl mx-auto px-6 py-12 md:py-24 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        <div class="lg:col-span-7 space-y-8 animate-fade-in">
+          <div class="inline-flex items-center gap-2 px-4 py-2 bg-primary-fixed/30 rounded-full">
+            <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+            <span class="text-sm font-semibold text-primary">{{ $t('app.subtitle') }}</span>
+          </div>
+          <h1 class="text-5xl md:text-7xl font-headline font-extrabold text-primary leading-[1.1] tracking-tight">
+            {{ $t('home.heroTitle') }}<br>
+            <span class="text-primary/60 font-light">{{ $t('home.heroTitleHighlight') }}</span>
+          </h1>
+          <p class="text-xl text-outline max-w-2xl leading-relaxed">
+            {{ $t('home.heroDesc') }}
+          </p>
+          <div class="flex flex-col sm:flex-row gap-4 pt-4">
+            <button 
+              @click="handleNavigate('/chat')"
+              class="gradient-primary text-on-primary px-10 py-5 rounded-xl text-lg font-bold flex items-center justify-center gap-3 botanical-shadow group active:scale-[0.98] transition-all"
+            >
+              {{ $t('home.startBtn') }}
+              <span class="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span>
+            </button>
           </div>
         </div>
 
-        <!-- Action 2: Chat Consultation -->
-        <div 
-          @click="router.push('/chat')"
-          class="group bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer relative overflow-hidden"
-        >
-          <div class="absolute -right-6 -top-6 bg-blue-50 w-24 h-24 rounded-full group-hover:scale-110 transition-transform"></div>
-          <div class="flex items-start gap-4 relative z-10">
-            <div class="bg-blue-100 p-3 rounded-xl text-blue-600">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
-              </svg>
+        <div class="lg:col-span-5 relative animate-fade-in" style="animation-delay: 0.2s">
+          <div class="aspect-square rounded-xl overflow-hidden botanical-shadow relative z-10">
+            <img alt="Medical AI" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAvaT5sRQB3NYezQzue_FMuJQjpsZ3SmsbfHEhltLBeEH5ps43MRrwajBvG6PxTKpqBrBR4zLFO2VwTG0i-Re3iMETuw7ozD6MwEkDCsp6wjH8zwGsBv7WD24kCufDFeOM8Dsok2tlaphbHurgn16599NcNE2GBxITQL5LY6qwl_vtk_1x4wO9tbIisIlfjHtP1CjORn3VWq1fzOjtzjlgxEBMCaAnsDDAHm8akOKA7yhZjaK-jn4WlBBVM4-WGni9r_7y9WwGBw6l5">
+          </div>
+          <!-- Asymmetric Floating Card -->
+          <div class="absolute -bottom-10 -left-10 bg-white/80 backdrop-blur-xl p-8 rounded-xl botanical-shadow z-20 max-w-xs border border-white/50 hidden md:block">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-12 h-12 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container">
+                <span class="material-symbols-outlined">clinical_notes</span>
+              </div>
+              <div>
+                <p class="text-xs text-outline font-bold uppercase tracking-widest">{{ $t('app.scan') }}</p>
+                <p class="font-bold text-primary">{{ $t('app.loading') }}</p>
+              </div>
             </div>
-            <div>
-              <h3 class="text-lg font-bold text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">发起多医生会诊</h3>
-              <p class="text-sm text-gray-500">
-                支持语音与文字输入。您可以邀请全科医生、心血管专家等联合对您的症状进行辩论与诊断。
-              </p>
+            <div class="space-y-2">
+              <div class="h-2 w-full bg-surface-container rounded-full overflow-hidden text-clip">
+                <div class="h-full bg-primary w-3/4"></div>
+              </div>
+              <p class="text-xs text-outline italic">“{{ $t('app.loading') }}”</p>
             </div>
           </div>
         </div>
+      </section>
 
-      </div>
-    </section>
+      <!-- Bento Grid Features -->
+      <section class="bg-surface-container-low py-32">
+        <div class="max-w-7xl mx-auto px-6">
+          <div class="mb-20 text-center max-w-3xl mx-auto">
+            <h2 class="text-4xl font-headline font-bold text-primary mb-6">{{ $t('home.heroTitleHighlight') }}</h2>
+            <p class="text-outline text-lg">{{ $t('home.heroDesc') }}</p>
+          </div>
 
-    <!-- Recent History / Tracker Placeholder -->
-    <section>
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold text-gray-800">最新健康报告</h2>
-        <button @click="router.push('/history')" class="text-sm text-blue-600 hover:underline font-medium">
-          查看全部历史 &rarr;
-        </button>
-      </div>
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-6 h-auto md:h-[800px]">
+            <!-- Large Feature: Multi-expert debate -->
+            <div 
+              @click="handleNavigate('/chat')"
+              class="md:col-span-8 bg-surface-container-lowest rounded-xl p-10 flex flex-col justify-between botanical-shadow group cursor-pointer hover:ring-2 hover:ring-primary/10 transition-all"
+            >
+              <div class="max-w-md">
+                <div class="w-16 h-16 rounded-full bg-primary-fixed/40 flex items-center justify-center mb-8">
+                  <span class="material-symbols-outlined text-primary text-3xl">groups</span>
+                </div>
+                <h3 class="text-3xl font-bold text-primary mb-4">{{ $t('home.features.team.title') }}</h3>
+                <p class="text-outline leading-relaxed">{{ $t('home.features.team.desc') }}</p>
+              </div>
+              <div class="mt-12 rounded-lg overflow-hidden relative min-h-48 md:min-h-0">
+                <img alt="Consultation" class="w-full h-full object-cover grayscale opacity-20 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuABT8smetXulvfwRA4afbzs28NmOnxKO4TZccUwx8nuPZKldd4Z3TDbNS9NW2HnGUUt8uJKQCCmqpPSH0pcEeRfpgS5hLkstchVqAeVFJfpx0WzcX33jEH3wT9dXhatCK7gbWlDuMT5Gi_GRTXdL3dvH-JymPpXiVr4utp9O_OtYXwoAPGwSX7KC5hOL-nGXd5kxg_shs9ed52C6n83L8SpPdqFLChFPk1KACvMEE0ZaBWrFQJHFnS0Y1aflrTp9k1QeSbUjlXT2ial">
+              </div>
+            </div>
 
-      <!-- Placeholder content before we build the actual database fetch logic -->
-      <div class="bg-white rounded-xl p-10 border border-gray-100 shadow-sm text-center flex flex-col items-center justify-center">
-        <div class="bg-gray-50 p-4 rounded-full mb-3 text-gray-400">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+            <!-- Right Column -->
+            <div class="md:col-span-4 flex flex-col gap-6">
+              <!-- Feature: Lab Scan -->
+              <div 
+                @click="handleNavigate('/ocr')"
+                class="flex-1 bg-primary text-on-primary rounded-xl p-8 botanical-shadow cursor-pointer hover:scale-[1.02] transition-transform"
+              >
+                <span class="material-symbols-outlined text-4xl mb-6">document_scanner</span>
+                <h3 class="text-2xl font-bold mb-3">{{ $t('app.scan') }}</h3>
+                <p class="text-primary-fixed-dim text-sm leading-relaxed">{{ $t('home.features.record.desc') }}</p>
+              </div>
+              <!-- Feature: Health Trends -->
+              <div 
+                @click="handleNavigate('/history')"
+                class="flex-1 bg-surface-container-highest rounded-xl p-8 botanical-shadow overflow-hidden relative cursor-pointer hover:scale-[1.02] transition-transform"
+              >
+                <div class="relative z-10">
+                  <span class="material-symbols-outlined text-4xl mb-6 text-primary">monitoring</span>
+                  <h3 class="text-2xl font-bold text-primary mb-3">{{ $t('home.features.record.title') }}</h3>
+                  <p class="text-outline text-sm leading-relaxed">{{ $t('home.features.record.desc') }}</p>
+                </div>
+                <div class="absolute bottom-0 right-0 left-0 h-24 bg-gradient-to-t from-primary/10 to-transparent"></div>
+              </div>
+            </div>
+
+            <!-- Bottom Features -->
+            <div class="md:col-span-4 bg-white rounded-xl p-8 botanical-shadow">
+              <span class="material-symbols-outlined text-3xl text-secondary mb-4">folder_managed</span>
+              <h4 class="text-xl font-bold text-primary mb-2">{{ $t('home.features.record.title') }}</h4>
+              <p class="text-outline text-sm">{{ $t('home.features.record.desc') }}</p>
+            </div>
+            <div class="md:col-span-4 bg-white rounded-xl p-8 botanical-shadow">
+              <span class="material-symbols-outlined text-3xl text-primary mb-4">self_care</span>
+              <h4 class="text-xl font-bold text-primary mb-2">{{ $t('home.features.privacy.title') }}</h4>
+              <p class="text-outline text-sm">{{ $t('home.features.privacy.desc') }}</p>
+            </div>
+            <div class="md:col-span-4 bg-white rounded-xl p-8 botanical-shadow">
+              <span class="material-symbols-outlined text-3xl text-tertiary mb-4">notifications_active</span>
+              <h4 class="text-xl font-bold text-primary mb-2">{{ $t('app.consult') }}</h4>
+              <p class="text-outline text-sm">{{ $t('home.features.team.desc') }}</p>
+            </div>
+          </div>
         </div>
-        <h3 class="text-lg font-medium text-gray-700 mb-1">暂无历史记录</h3>
-        <p class="text-sm text-gray-500 max-w-sm">
-          您还没有使用过会诊或上传过体检报告。立即开始体验智能分析！
-        </p>
-      </div>
-    </section>
+      </section>
 
+      <!-- Footer -->
+      <footer class="bg-surface py-20 px-6 border-t border-stone-200">
+        <div class="max-w-7xl mx-auto text-on-surface">
+          <div class="flex flex-col md:flex-row justify-between items-start gap-12 mb-16">
+            <div class="space-y-6">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-primary text-2xl">spa</span>
+                <span class="font-headline font-bold text-lg text-primary tracking-tighter">{{ $t('app.title') }}</span>
+              </div>
+              <p class="text-outline max-w-xs font-light">{{ $t('home.heroDesc') }}</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-12">
+              <div class="space-y-4">
+                <p class="font-bold text-primary">{{ $t('app.title') }}</p>
+                <ul class="space-y-2 text-sm text-outline font-light">
+                  <li><a @click="handleNavigate('/chat')" class="hover:text-primary transition-colors cursor-pointer">{{ $t('app.consult') }}</a></li>
+                  <li><a @click="handleNavigate('/history')" class="hover:text-primary transition-colors cursor-pointer">{{ $t('app.records') }}</a></li>
+                  <li><a class="hover:text-primary transition-colors cursor-pointer">Wellness Journal</a></li>
+                </ul>
+              </div>
+              <div class="space-y-4">
+                <p class="font-bold text-primary">{{ $t('app.profile') }}</p>
+                <ul class="space-y-2 text-sm text-outline font-light">
+                  <li><a class="hover:text-primary transition-colors cursor-pointer text-clip">FAQ</a></li>
+                  <li><a class="hover:text-primary transition-colors cursor-pointer">{{ $t('footer.contact') }}</a></li>
+                </ul>
+              </div>
+              <div class="space-y-4">
+                <p class="font-bold text-primary">{{ $t('app.about') }}</p>
+                <ul class="space-y-2 text-sm text-outline font-light">
+                  <li><a class="hover:text-primary transition-colors cursor-pointer text-clip">{{ $t('footer.privacy') }}</a></li>
+                  <li><a class="hover:text-primary transition-colors cursor-pointer text-clip">{{ $t('footer.terms') }}</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div class="pt-12 border-t border-stone-100 flex flex-col md:flex-row justify-between items-center gap-4">
+            <p class="text-outline text-xs font-light">{{ $t('footer.copyright') }}</p>
+            <div class="flex gap-6">
+              <span class="material-symbols-outlined text-primary/40 hover:text-primary cursor-pointer">public</span>
+              <span class="material-symbols-outlined text-primary/40 hover:text-primary cursor-pointer">verified_user</span>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </main>
   </div>
 </template>
 
 <script setup>
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/useUserStore'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const userStore = useUserStore()
+const { locale } = useI18n()
+
+/**
+ * Handle navigation with auth check
+ * User wants to be prompted for login only when clicking features.
+ */
+function handleNavigate(path) {
+  if (path === '/home') {
+    router.push('/')
+    return
+  }
+
+  // If already logged in, go to the feature
+  if (userStore.isLoggedIn) {
+    router.push(path)
+  } else {
+    // If not logged in, redirect to login
+    router.push({
+      path: '/login',
+      query: { redirect: path }
+    })
+  }
+}
+
+/**
+ * Handle user logout
+ */
+async function handleLogout() {
+  try {
+    await userStore.logout()
+    // Session is cleared, UI updates automatically via userStore.isLoggedIn
+  } catch (err) {
+    console.error('Logout failed:', err)
+  }
+}
 </script>
 
 <style scoped>
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+  animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Custom scrollbar handling for the expert panel or feature grid on mobile */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 </style>

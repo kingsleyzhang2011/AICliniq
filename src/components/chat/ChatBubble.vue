@@ -1,67 +1,85 @@
 <script setup>
-defineProps({
-  message: {
-    type: Object,
-    required: true
-  }
+import { computed } from 'vue'
+
+const props = defineProps({
+  message: { type: Object, required: true }
+})
+
+const isUser    = computed(() => props.message.role === 'user')
+const isSummary = computed(() => props.message.meta?.stage === 'summary')
+const isSystem  = computed(() => props.message.role === 'system')
+
+// Left-border accent colour per stage / role
+const borderColor = computed(() => {
+  const stage = props.message.meta?.stage
+  if (stage === 'summary')    return 'border-primary'
+  if (stage === 'consulting') return 'border-tertiary-container'
+  if (props.message.role === 'nurse') return 'border-primary-fixed-dim'
+  return 'border-secondary'
+})
+
+// Doctor name label colour
+const nameColor = computed(() => {
+  const stage = props.message.meta?.stage
+  if (stage === 'consulting') return 'text-tertiary'
+  if (props.message.role === 'nurse') return 'text-primary'
+  return 'text-secondary'
 })
 </script>
 
 <template>
-  <div 
-    class="flex w-full mb-4 px-4"
-    :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
-  >
-    <!-- 用户消息 -->
-    <div v-if="message.role === 'user'" class="max-w-[80%]">
-      <div class="bg-blue-600 text-white rounded-2xl rounded-tr-none px-4 py-2 shadow-sm">
-        {{ message.content }}
-      </div>
-      <div class="text-right text-[10px] text-gray-400 mt-1">
-        {{ new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
+  <!-- ── System Status Badge ── -->
+  <div v-if="isSystem" class="flex justify-center my-4">
+    <div class="bg-surface-container-high text-on-surface-variant px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest flex items-center gap-2 editorial-shadow">
+      <span class="material-symbols-outlined text-xs" style="font-variation-settings:'FILL' 1;">info</span>
+      {{ message.content }}
+    </div>
+  </div>
+
+  <!-- ── User Bubble (right-aligned) ── -->
+  <div v-else-if="isUser" class="flex justify-end">
+    <div class="max-w-[80%] bg-surface-container-high px-6 py-4 rounded-xl editorial-shadow">
+      <p class="text-on-surface text-lg leading-relaxed font-body">"{{ message.content }}"</p>
+      <div class="mt-2 flex items-center gap-2 text-primary font-semibold text-sm">
+        <span class="material-symbols-outlined text-sm" style="font-variation-settings:'FILL' 1;">check_circle</span>
+        <span>{{ $t('chat.sent') }}</span>
       </div>
     </div>
+  </div>
 
-    <!-- 总结阶段卡片效果 -->
-    <div v-else-if="message.meta?.stage === 'summary'" class="w-full bg-white border-2 border-blue-500 rounded-xl p-6 shadow-lg mb-6">
-      <div class="flex items-center gap-2 mb-4 border-b pb-2">
-        <span class="text-2xl">{{ message.meta.emoji }}</span>
-        <span class="font-bold text-lg text-blue-900">{{ message.meta.doctorName }}</span>
-      </div>
-      <div class="prose prose-sm max-w-none text-gray-800 whitespace-pre-wrap leading-relaxed">
+  <!-- ── Lead Doctor Summary Card ── -->
+  <div v-else-if="isSummary" class="flex gap-4 w-full">
+    <div class="w-12 h-12 rounded-full flex-shrink-0 bg-primary-container editorial-shadow overflow-hidden flex items-center justify-center text-2xl">
+      {{ message.meta?.emoji || '📋' }}
+    </div>
+    <div class="max-w-[85%] bg-primary-container px-6 py-5 rounded-2xl editorial-shadow">
+      <h4 class="font-headline font-bold text-on-primary-container mb-3 text-lg">
+        {{ message.meta?.doctorName || `${$t('chat.leader')} Summary` }}
+      </h4>
+      <div class="font-body leading-relaxed text-on-primary-container opacity-90 whitespace-pre-wrap">
         {{ message.content }}
       </div>
     </div>
+  </div>
 
-    <!-- 系统/医生消息 -->
-    <div v-else class="max-w-[85%] flex flex-col items-start gap-1">
-      <!-- 医生头衔 -->
-      <div class="flex items-center gap-1 px-1">
-        <span class="text-sm">{{ message.meta?.emoji }}</span>
-        <span class="text-xs font-medium text-gray-600">{{ message.meta?.doctorName }}</span>
-        <span v-if="message.meta?.stage === 'debate'" class="bg-orange-100 text-orange-600 text-[10px] px-1 rounded border border-orange-200">辩论</span>
-      </div>
-
-      <!-- 气泡主体 -->
-      <div 
-        class="relative px-4 py-2 rounded-2xl shadow-sm text-sm leading-relaxed"
-        :class="[
-          message.role === 'nurse' ? 'bg-pink-50 text-pink-900 border border-pink-100 rounded-tl-none' : '',
-          message.role === 'moderator' ? 'bg-blue-50 text-blue-900 border border-blue-100 rounded-tl-none' : '',
-          !['nurse', 'moderator'].includes(message.role) ? 'bg-white text-gray-800 border border-gray-100 rounded-tl-none' : '',
-          message.meta?.stage === 'debate' ? 'border-l-4 border-l-orange-400' : ''
-        ]"
-      >
-        <div class="whitespace-pre-wrap">{{ message.content }}</div>
-      </div>
-      
-      <div class="text-[10px] text-gray-400 mt-1 px-1">
-        {{ new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
+  <!-- ── Standard Expert Bubble (left-aligned with avatar) ── -->
+  <div v-else class="flex gap-4 w-full">
+    <div class="w-12 h-12 rounded-full flex-shrink-0 bg-surface-container-lowest editorial-shadow border border-outline-variant/20 overflow-hidden flex items-center justify-center text-2xl">
+      {{ message.meta?.emoji || '🩺' }}
+    </div>
+    <div class="max-w-[85%] bg-surface-container-lowest px-6 py-5 rounded-2xl editorial-shadow border-l-4" :class="borderColor">
+      <h4 class="font-headline font-bold mb-2 text-lg" :class="nameColor">
+        {{ message.meta?.doctorName || 'AI Expert' }}
+      </h4>
+      <div class="font-body text-on-surface leading-relaxed whitespace-pre-wrap">
+        {{ message.content }}
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 可以在这里添加打字机等微动效 */
+.editorial-shadow {
+  box-shadow: 0 24px 48px rgba(27, 28, 25, 0.06);
+}
 </style>

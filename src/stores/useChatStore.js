@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import {
   callWithFallback,
   DOCTOR_ROLES,
@@ -8,6 +8,7 @@ import {
   writeLog
 } from '../services/ai'
 import { retrieveKnowledge, formatKnowledgeContext } from '../services/rag'
+import { useUserStore } from './useUserStore'
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms))
 
@@ -17,7 +18,8 @@ export const useChatStore = defineStore('chat', () => {
   const messages      = ref([])   // 聊天记录
   const stage         = ref(CONSULT_STAGES.NURSE)  // 当前会诊阶段
   const isLoading     = ref(false)
-  const language      = ref('zh')
+  const userStore     = useUserStore()
+  const language      = computed(() => userStore.preferredLanguage)
 
   // 症状上下文（贯穿整个会诊）
   const context = ref({
