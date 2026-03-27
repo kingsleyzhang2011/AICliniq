@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 4173"
+    "preview": "vite preview --port 4173",
+    "embed": "node --env-file=.env.local backfill_embeddings.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",

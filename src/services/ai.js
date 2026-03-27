@@ -7,22 +7,18 @@ const KEYS = {
 // 如需使用 Gemini 2.5 Preview，设置环境变量为：
 // gemini-2.5-flash-preview-04-17
 const MODELS = {
-  gemini: import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.0-flash',
+  gemini: 'gemini-2.5-flash',
   groq: 'llama-3.3-70b-versatile',
-  siliconflow: 'Qwen/Qwen2.5-7B-Instruct'
+  siliconflow: 'Qwen/Qwen2.5-72B-Instruct'
 }
 
 const TIMEOUTS = {
-  gemini: 10000,
-  groq: 15000,
-  siliconflow: 20000
+  gemini: 25000,      // 跨境访问建议至少 25s
+  groq: 20000,
+  siliconflow: 25000
 }
 
-console.log('[LifeGuard] Environment Check:', {
-  gemini: KEYS.gemini ? `VALID (starts with ${KEYS.gemini.substring(0, 4)}...)` : 'MISSING',
-  groq: KEYS.groq ? `VALID (starts with ${KEYS.groq.substring(0, 4)}...)` : 'MISSING',
-  siliconflow: KEYS.siliconflow ? `VALID (starts with ${KEYS.siliconflow.substring(0, 4)}...)` : 'MISSING'
-})
+export const writeLog = (msg) => console.log(`[AICliniq] ${msg}`)
 
 const FALLBACK_ORDER = [
   { provider: 'gemini', model: MODELS.gemini },
@@ -30,42 +26,106 @@ const FALLBACK_ORDER = [
   { provider: 'siliconflow', model: MODELS.siliconflow }
 ]
 
+// ── 1. 地域检测与智能路由 ──────────────────────────────────
+
 /**
- * 核心调用函数，实现 AGENTS.md 要求的四轨 Fallback
+ * 智能检测用户所在地域 (基于浏览器时区)
+ * 适配中国大陆主流时区，返回 'CN' 或 'GLOBAL'
  */
-export async function callWithFallback(systemPrompt, userPrompt, history = [], attachments = []) {
-  let lastError = null
-
-  for (let i = 0; i < FALLBACK_ORDER.length; i++) {
-    const { provider, model } = FALLBACK_ORDER[i]
-    const apiKey = KEYS[provider]
-
-    console.log(`[LifeGuard Debug] Attempting ${provider} (${model}). Key present: ${!!apiKey}, Length: ${apiKey?.length}, StartsWith: ${apiKey?.substring(0, 4)}`)
-
-    if (!apiKey) {
-      console.warn(`[LifeGuard] Skipping ${provider}: API Key not configured.`)
-      continue
+function getUserRegion() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (['Asia/Shanghai', 'Asia/Chongqing', 'Asia/Urumqi', 'Asia/Harbin'].includes(tz)) {
+      return 'CN';
     }
+  } catch (e) {
+    console.warn('[AI Router] Region detection failed, defaulting to GLOBAL');
+  }
+  return 'GLOBAL';
+}
 
+/**
+ * 核心路由中心：生产环境【精益路由方案】
+ * 1. 护士 INTAKE -> Gemini 2.5 Flash Lite (低功耗，非核心配额)
+ * 2. 专家 DEBATE -> Groq llama-3.3 (物理卸敏，避开 429)
+ * 3. 全科 SUMMARY -> Gemini 2.5 Flash (最高智力)
+ * 4. 大陆用户 -> SiliconFlow Qwen2.5-72B (高可用)
+ */
+export function getModelRouting(role = 'SUMMARY') {
+  const region = getUserRegion();
+
+  // 🇨🇳 大陆用户：全角色第一轨指向 SiliconFlow
+  if (region === 'CN') {
+    return { 
+      provider: 'siliconflow', 
+      model: 'Qwen/Qwen2.5-72B-Instruct' 
+    };
+  }
+
+  // 🌍 全球用户：精益模型绑定 (注意：Gemini 不带 -latest 后缀，防止 404)
+  switch (role) {
+    case 'NURSE': 
+      return { 
+        primary: { provider: 'gemini', model: 'gemini-2.5-flash-lite' },
+        fallback: null // 护士入口禁止 fallback，防止模型风格切换导致分诊偏差
+      };
+      
+    case 'DEBATE':
+    case 'CONSULTING':
+      return { 
+        primary: { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+        fallback: { provider: 'gemini', model: 'gemini-2.5-flash-lite' }
+      };
+      
+    case 'ATTENDING':
+    case 'ROUTING':
+    case 'SUMMARY':
+    case 'INTERACT':
+    default:
+      return { 
+        primary: { provider: 'gemini', model: 'gemini-2.5-flash' },
+        fallback: { provider: 'siliconflow', model: 'Qwen/Qwen2.5-72B-Instruct' }
+      };
+  }
+}
+
+/**
+ * 精益版核心调用函数：实现强制性的【原子级调用】
+ */
+export async function callWithFallback(systemPrompt, userPrompt, history = [], attachments = [], options = {}) {
+  const role = options.role || 'SUMMARY';
+  const routes = getModelRouting(role);
+  
+  const primary = routes.primary || routes;
+  const fallback = routes.fallback;
+
+  console.log(`[AI Router] Role: ${role}, Primary: ${primary.provider} (${primary.model})`);
+
+  // 如果是 NURSE 角色，直接执行 Primary，不进行 Fallback
+  if (role === 'NURSE' || !fallback) {
+    return await executeCall(primary.provider, primary.model, KEYS[primary.provider], systemPrompt, userPrompt, history, attachments);
+  }
+
+  try {
+    // 轨 1：执行首选模型
+    return await executeCall(primary.provider, primary.model, KEYS[primary.provider], systemPrompt, userPrompt, history, attachments);
+  } catch (error) {
+    console.warn(`[AI Fallback] ${primary.provider} 异常 (${error.message}) -> 激活二轨降级: ${fallback.provider}`);
+    
     try {
-      return await executeCall(provider, model, apiKey, systemPrompt, userPrompt, history, attachments)
-    } catch (error) {
-      const isAbort = error.name === 'AbortError' || error.message?.includes('timeout')
-      const status = error.response?.status
+      // 轨 2：执行保底模型
+      return await executeCall(fallback.provider, fallback.model, KEYS[fallback.provider], systemPrompt, userPrompt, history, attachments);
+    } catch (fallbackError) {
+      console.error(`[AI Router Critical] 二轨全线崩溃:`, fallbackError.message);
       
-      console.error(`[AI Fallback] ${provider} (${model}) failed: status=${status || 'N/A'}, msg=${error.message}`, error)
-
-      // 如果是最后一个节点，或者是非 429/503 的严重错误
-      if (i === FALLBACK_ORDER.length - 1) {
-        throw lastError
+      // 最终尝试 (1.5 Flash)
+      try {
+        return await executeCall('gemini', 'gemini-1.5-flash', KEYS.gemini, systemPrompt, userPrompt, history, attachments);
+      } catch (finalError) {
+        throw finalError;
       }
-      
-      // 否则继续循环（Fallback）
-      continue
     }
   }
-  
-  throw lastError || new Error('All AI providers failed or were not configured.')
 }
 
 async function executeCall(provider, model, apiKey, system, user, history, attachments) {
@@ -113,7 +173,7 @@ async function callGemini(model, apiKey, system, user, history, attachments, sig
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
     }),
     signal
   })
@@ -146,7 +206,7 @@ async function callOpenAICompatible(baseUrl, model, apiKey, system, user, histor
     body: JSON.stringify({
       model,
       messages,
-      temperature: 0.7
+      temperature: 0.2
     }),
     signal
   })
@@ -246,81 +306,149 @@ export function buildSystemPrompt(roleKey, language = 'zh') {
 // --- 会诊阶段常量 ---
 
 export const CONSULT_STAGES = {
-  INTAKE:     'intake',      // 护士问诊，收集症状
-  ROUTING:    'routing',     // 全科分诊，决定叫谁
-  CONSULTING: 'consulting',  // 专科医生依次发言
-  DEBATE:     'debate',      // 有分歧时辩论
-  INTERACT:   'interact',    // 用户追问阶段
-  SUMMARY:    'summary'      // 输出行动清单
+  NURSE:      'nurse',       // 护士：初诊收集
+  ATTENDING:  'attending',   // 主治：深挖+决策
+  CONSULTING: 'consulting',  // 专家：会诊讨论
+  SUMMARY:    'summary',     // 总结：行动方案
+  INTERACT:   'interact'     // 自由回复阶段
 }
 
-import { retrieveKnowledge, formatKnowledgeContext } from './rag.js'
+import { formatKnowledgeContext } from './rag.js'
 
 /**
- * 核心提示词构建函数 (支持 RAG 注入)
+ * 核心提示词构建函数 (四阶段重构版)
  */
-export async function buildStagePrompt(stage, roleKey, language = 'zh', context = {}) {
+export async function buildStagePrompt(stage, roleKey, language = 'zh', extraContext = {}) {
   const role = DOCTOR_ROLES[roleKey] || DOCTOR_ROLES.general
   const isZh = language === 'zh'
-
   const DISCLAIMER = isZh
     ? '\n\n⚠️ 本回复仅供健康参考，不构成医疗诊断。如有紧急情况请立即就医。'
     : '\n\n⚠️ For reference only. Not medical advice. Seek emergency care if needed.'
 
+  const patientState = extraContext.patient_state || {}
   let basePrompt = ''
 
-  if (stage === CONSULT_STAGES.INTAKE) {
+  if (stage === CONSULT_STAGES.NURSE) {
     basePrompt = isZh
-      ? `你是智康伴侣的问诊护士小慧，性格温柔专业。用户刚描述了症状，你需要用口语化中文追问3个最关键的问题，帮助医生团队更好地了解情况。要求：- 用编号列出3个问题 - 语气亲切，像真人护士 - 每个问题简短，不超过20字 - 不要给任何医疗建议，只问问题${DISCLAIMER}`
-      : `You are Xiao Hui, a caring intake nurse. The user described symptoms. Ask 3 focused follow-up questions in plain conversational English to help doctors understand better. Rules: numbered list, friendly tone, under 15 words each, no medical advice yet.${DISCLAIMER}`
-  } else if (stage === CONSULT_STAGES.ROUTING) {
-    basePrompt = isZh
-      ? `你是会诊主持人，全科医生张医生。根据用户的症状和护士的问诊结果，你需要：1. 用1-2句话简短总结病情要点 2. 宣布今天邀请哪些专科医生（从以下选择最相关的1-2位）：心血管科医生、内分泌科医生、营养师 3. 如果症状很简单，可以只由你一人回答，不必邀请专科 格式要求：- 口语化，像真实会诊室里的医生 - 总字数不超过100字 - 结尾说"我们开始吧"${DISCLAIMER}`
-      : `You are Dr. Zhang, the General Practitioner moderating this consultation. Based on symptoms and intake answers: 1. Summarize key points in 1-2 sentences 2. Announce which specialists to invite (1-2 from: Cardiologist, Endocrinologist, Nutritionist) based on relevance 3. For simple cases, handle alone without specialists Keep it conversational, under 80 words, end with "Let's begin."${DISCLAIMER}`
-  } else if (stage === CONSULT_STAGES.CONSULTING) {
-    const name = isZh ? role.name_zh : role.name_en
-    const focus = isZh ? role.focus_zh : role.focus_en
-    const tone = isZh ? role.tone_zh : role.tone_en
-    const maxWords = isZh ? role.max_words_zh : role.max_words_en
-    const othersOpinions = context.previous_opinions?.length
-      ? (isZh ? `其他医生已经说了：${context.previous_opinions.join('；')}` 
-               : `Others said: ${context.previous_opinions.join('; ')}`)
-      : ''
+      ? `你是初诊护士，正在和患者聊天。
+- 目标：收集症状、病史、用药、生活习惯
+- 对模糊回答主动追问
+- 记录每条信息状态
+- 不生成诊断或结论
+- 风格自然亲切
 
+当前已收集状态：${JSON.stringify(patientState)}
+如果你认为基础信息已经足够（无需确诊），请在回复内容的最后，另起一行添加：[TO_ATTENDING]`
+      : `You are the triage nurse chatting with the patient.
+- Goal: Collect symptoms, medical history, meds, lifestyle
+- Follow up on vague answers
+- Record status of each info
+- DO NOT generate diagnosis or conclusions
+- Friendly, natural tone
+
+Current status: ${JSON.stringify(patientState)}
+If basic info is sufficient, append on a new line: [TO_ATTENDING]`
+
+  } else if (stage === CONSULT_STAGES.ATTENDING) {
     basePrompt = isZh
-      ? `你是${name}，专注于${focus}。${tone} ${othersOpinions} 现在轮到你发言。要求：- 只说你专科范围内的判断 - 如果和其他医生有不同看法，明确指出分歧点 - 字数严格控制在${maxWords}字以内 - 用第一人称，口语化表达 - 结尾可以提一个你最想追问用户的问题（可选）${DISCLAIMER}`
-      : `You are the ${name}, focusing on ${focus}. ${tone} ${othersOpinions} Now it's your turn. Rules: - Only address your specialty area - Explicitly note any disagreement with other doctors - Strictly under ${maxWords} words - First person, conversational tone - Optionally end with one follow-up question ${DISCLAIMER}`
-  } else if (stage === CONSULT_STAGES.DEBATE) {
-    const name = isZh ? role.name_zh : role.name_en
+      ? `你是主治医生，根据护士收集的信息与患者交流：
+1. 主动追问关键症状与补充信息。
+2. 判断是否召唤专家团队。如果某科专家意见至关重要，请在回答中包含：[SUMMON: 专家科室名]（可选：心血管科医生、内分泌科医生、营养师、消化内科、心理咨询、儿科）。
+3. 对患者提问、更正信息要自然反馈。
+4. 【重要】在准备生成总结前，务必先询问患者是否还有其他补充或担心的问题。
+5. 只有当患者表示没有更多补充，且信息已完全充分时，才输出：[TO_SUMMARY]
+
+患者当前信息：${JSON.stringify(patientState)}`
+      : `You are the Lead Attending Physician:
+1. Follow up on critical symptoms.
+2. If expert input is needed, include: [SUMMON: Specialist Name] (Options: Cardiologist, Endocrinologist, Nutritionist, etc.).
+3. Naturally respond to patient questions or corrections.
+4. [CRITICAL] Before summarizing, ASK the patient if they have any more concerns or info to add.
+5. ONLY when the patient is ready and info is sufficient, output: [TO_SUMMARY]
+
+Current info: ${JSON.stringify(patientState)}`
+
+  } else if (stage === CONSULT_STAGES.CONSULTING) {
+    const previousOpinions = extraContext.previous_opinions || ""
+    const targetRoleName = isZh ? role.name_zh : role.name_en
     basePrompt = isZh
-      ? `你是${name}。主持人指出你和其他医生在以下问题上有分歧："${context.dispute_topic}" 请用1-2句话清晰表明你的立场和理由。不要重复之前说过的内容，直接说核心分歧。严格不超过60字。${DISCLAIMER}`
-      : `You are the ${name}. The moderator noted a disagreement on: "${context.dispute_topic}" State your position in 1-2 sentences. Be direct, no repetition. Strictly under 50 words.${DISCLAIMER}`
-  } else if (stage === CONSULT_STAGES.INTERACT) {
-    const name = isZh ? role.name_zh : role.name_en
-    basePrompt = isZh
-      ? `你是${name}，正在回答用户的追问。根据用户的具体问题给出针对性回答。要求：口语化，不超过150字，可以建议用户追问其他医生。${DISCLAIMER}`
-      : `You are the ${name}, answering a follow-up question. Give a targeted answer. Conversational, under 120 words. You may suggest the user ask another doctor if relevant.${DISCLAIMER}`
+      ? `你是${targetRoleName}专家，正在进行患者会诊。
+- 根据主治医生传递的信息提出初步分析和意见
+- 可补充或反驳其他专家观点
+- 输出意见用于主治医生最终总结
+
+患者信息摘要：${JSON.stringify(patientState)}
+已有会诊意见：${previousOpinions}`
+      : `You are the ${targetRoleName} expert in consultation.
+- Provide initial analysis based on attending's info
+- Supplement or counter other experts' views
+- Your opinion aids the final summary
+
+Patient info: ${JSON.stringify(patientState)}
+Previous opinions: ${previousOpinions}`
+
   } else if (stage === CONSULT_STAGES.SUMMARY) {
+    const rawOpinions = JSON.stringify(extraContext.opinions || {})
     basePrompt = isZh
-      ? `你是会诊主持人张医生。综合所有医生的意见，给出今天会诊的最终总结。必须包含以下结构（不能省略任何一项）：\n\n【今天的结论】\n用1-2句话总结最可能的情况。\n\n【现在可以做的事】\n列出3-5条今天就能执行的具体建议，用数字编号。每条建议要具体（不能写"多休息"，要写"今晚保证8小时睡眠"）。\n\n【需要就医的信号】\n列出2-3个出现时必须立刻就医的症状。\n\n【温馨提示】\n问用户是否有任何疑问，或者想对哪位医生追问。\n\n语气温暖，像一位真正关心患者的医生。${DISCLAIMER}`
-      : `You are Dr. Zhang, the moderating GP. Synthesize all opinions into a final summary. Must include ALL sections:\n\n[Conclusion]\n1-2 sentences on the most likely situation.\n\n[Action Items]\n3-5 specific numbered steps for today. Be concrete (not "rest more" but "aim for 8 hours sleep tonight").\n\n[Warning Signs]\n2-3 symptoms that require immediate medical attention.\n\n[Next Steps]\nAsk if the user has questions or wants to follow up with any doctor.\n\nWarm, caring tone like a doctor who genuinely cares.${DISCLAIMER}`
+      ? `你是主治医生，正在生成最终诊断报告。
+任务：
+1. 整合护士报告、专家意见及本次所有交流记录。
+2. 生成最终诊断总结、生活建议和复查计划。
+3. 【禁令】绝对不要再向患者索取在 ${JSON.stringify(patientState)} 中已经存在的信息。
+4. 既然是最终总结，应当给出明确的分析结果，而不是列出一堆问题。
+
+已核实患者信息：${JSON.stringify(patientState)}
+各专家意见：${rawOpinions}${DISCLAIMER}`
+      : `You are the Lead Attending Physician finalizing the report:
+1. Synthesize all info (Nurse, Experts, History).
+2. Provide diagnosis summary, lifestyle advice, and follow-up.
+3. [PROHIBITED] Do NOT ask for information already present in ${JSON.stringify(patientState)}.
+4. Provide definitive analysis rather than a list of questions.
+
+Verified Patient Info: ${JSON.stringify(patientState)}
+Expert Opinions: ${rawOpinions}${DISCLAIMER}`
+
+  } else if (stage === CONSULT_STAGES.INTERACT) {
+    const targetRoleName = isZh ? role.name_zh : role.name_en
+    basePrompt = isZh
+      ? `你是${targetRoleName}，正在回答用户的自由追问。要求：口语化，不超过150字，可以建议用户追问其他医生。${DISCLAIMER}`
+      : `You are ${targetRoleName}, answering a follow-up question. Conversational, under 120 words.${DISCLAIMER}`
   } else {
     basePrompt = buildSystemPrompt(roleKey, language)
   }
 
-  // 2. RAG 知识注入逻辑
-  let knowledgeContext = ''
-  const symptoms = context.symptoms || ''
-  
-  // 只在医生发言阶段、辩论阶段和总结阶段注入医学知识库内容
-  if (['consulting', 'debate', 'summary'].includes(stage) && symptoms) {
-    try {
-      const knowledge = await retrieveKnowledge(symptoms, language)
-      knowledgeContext = formatKnowledgeContext(knowledge)
-    } catch (err) {
-      console.warn('[RAG] Retrieval failed, proceeding without extra context')
-    }
-  }
 
-  return basePrompt + knowledgeContext
+  // 2. RAG 知识注入逻辑：遵循 RAG 最佳实践进行显式字符串拼接
+  // 增加【强制规则】标签，提升模型对资料的依从度
+  const ragContext = extraContext.rag_info || (isZh ? '暂无匹配的临床指南。' : 'No matching clinical guidelines found.')
+  
+  const finalPrompt = isZh 
+    ? `你是一个医疗AI助手（AICliniq）。
+    
+【强制规则】
+- 必须优先使用【参考资料】回答
+- 如果参考资料不足，必须说明“不确定”
+- 不允许凭空编造医学结论
+
+【参考资料】
+${ragContext}
+
+【任务与职责】
+${basePrompt}
+    `
+    : `You are an AI medical assistant (AICliniq).
+
+【MANDATORY RULES】
+- YOU MUST use the provided [REFERENCE] as your primary source.
+- If references are insufficient, say "Uncertain".
+- DO NOT hallucinate medical facts.
+
+【REFERENCE】
+${ragContext}
+
+【TASK & ROLE】
+${basePrompt}
+    `;
+  
+  return finalPrompt
 }

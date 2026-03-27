@@ -1,18 +1,18 @@
 import { supabase } from './supabase.js'
 
+const model = "gemini-embedding-2-preview";
 const GEMINI_EMBEDDING_URL = 
-  'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent'
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`
 
-// ── 1. 文本向量化 ──────────────────────────────────────
-export async function embedText(text) {
+/**
+ * RAG 核心：永远使用 Gemini 进行向量化（受控于 768 维度）
+ */
+export async function embedText(textToEmbed) {
   // 增加对 Node.js 脚本的兼容性
   let apiKey = ''
   try {
-    // 只有在 Vite 环境下 import.meta.env 才存在
     apiKey = import.meta.env?.VITE_GEMINI_KEY
-  } catch (e) {
-    // 忽略错误，回退到 process.env
-  }
+  } catch (e) { }
 
   if (!apiKey && typeof process !== 'undefined') {
     apiKey = process.env.VITE_GEMINI_KEY
@@ -28,22 +28,27 @@ export async function embedText(text) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'models/text-embedding-004',
-        content: { parts: [{ text }] }
+        content: {
+          parts: [{ text: textToEmbed }]
+        },
+        // 【核心救命符】gemini-embedding-001 默认是 3072 维
+        // 你的数据库（如 Supabase）如果是按旧版 004 设置的 768 维，不加这行会存不进去
+        outputDimensionality: 768 
       })
-    })
-    
+    });
+
+    const data = await response.json();
+
     if (!response.ok) {
-      const errorText = await response.text()
-      console.warn(`[RAG] Embedding failed: ${response.status} - ${errorText}`)
-      return null
+      const errorMsg = data.error?.message || 'Unknown error'
+      throw new Error(`[RAG API Error] Status: ${response.status}, Msg: ${errorMsg}`);
     }
-    
-    const data = await response.json()
-    return data.embedding?.values ?? null
-  } catch (err) {
-    console.warn('[RAG] Network error during embedding:', err.message)
-    return null
+
+    return data.embedding.values;
+
+  } catch (error) {
+    console.error("[RAG Terminal Error]:", error);
+    return null; // 保持原有接口习惯，外部调用期望 null 以跳过
   }
 }
 
@@ -53,11 +58,10 @@ export async function retrieveKnowledge(symptoms, language = 'zh', topK = 3) {
     const embedding = await embedText(symptoms)
     if (!embedding) return []
     
-    const { data, error } = await supabase.rpc('match_medical_knowledge', {
+    const { data, error } = await supabase.rpc('match_documents', {
       query_embedding: embedding,
-      match_threshold: 0.75,
-      match_count: topK,
-      lang: language
+      match_threshold: 0.5, // 用户要求的 0.5
+      match_count: topK
     })
     
     if (error) {

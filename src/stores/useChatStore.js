@@ -4,14 +4,18 @@ import {
   callWithFallback,
   DOCTOR_ROLES,
   CONSULT_STAGES,
-  buildStagePrompt
+  buildStagePrompt,
+  writeLog
 } from '../services/ai'
+import { retrieveKnowledge, formatKnowledgeContext } from '../services/rag'
+
+const delay = (ms) => new Promise(r => setTimeout(r, ms))
 
 export const useChatStore = defineStore('chat', () => {
 
   // ── 状态 ────────────────────────────────────────
   const messages      = ref([])   // 聊天记录
-  const stage         = ref(CONSULT_STAGES.INTAKE)  // 当前会诊阶段
+  const stage         = ref(CONSULT_STAGES.NURSE)  // 当前会诊阶段
   const isLoading     = ref(false)
   const language      = ref('zh')
 
@@ -22,7 +26,15 @@ export const useChatStore = defineStore('chat', () => {
     invited_roles:     [],    // 全科决定邀请的医生列表
     opinions:          {},    // 各医生的意见 { roleKey: '意见文本' }
     disputes:          [],    // 发现的分歧列表
-    consult_round:     0      // 当前是第几轮
+    consult_round:     0,     // 当前是第几轮
+    rag_knowledge:     '',    // 缓存当前会诊的 RAG 知识
+    patient_state: {          // 主治医师收集的结构化病历
+      symptoms: '',
+      history: '',
+      medications: '',
+      lifestyle: '',
+      allergies: ''
+    }
   })
 
   // ── 工具函数 ─────────────────────────────────────
@@ -54,72 +66,237 @@ export const useChatStore = defineStore('chat', () => {
     return relevant
   }
 
+  // 获取 RAG 上下文并设置默认值
+  async function getRAGContext() {
+    try {
+      if (!context.value.symptoms) return ''
+      const knowledge = await retrieveKnowledge(context.value.symptoms, language.value)
+      const formatted = formatKnowledgeContext(knowledge)
+      console.log("[RAG CONTEXT]", formatted || 'No match')
+      return formatted || (language.value === 'zh' ? '\n\n暂无匹配的临床指南。' : '\n\nNo matching clinical guidelines found.')
+    } catch (e) {
+      console.warn('[RAG] Retrieval failed, using fallback notice', e)
+      console.log("[RAG CONTEXT] ERROR FALLBACK")
+      return language.value === 'zh' ? '\n\n暂无匹配的临床指南。' : '\n\nNo matching clinical guidelines found.'
+    }
+  }
+
+  // ── 内部状态分析 (轻量级 AI 更新病历) ─────────────────────
+  async function updatePatientState(userInput) {
+    const history = messages.value.slice(-6).map(m => `${m.role}: ${m.content}`).join('\n')
+    const prompt = `你是一个医疗数据提取器。根据以下对话历史，更新并输出最新的患者信息状态。
+只输出 JSON 格式，包含以下字段：symptoms, history, medications, lifestyle, allergies。
+不要有任何解释。
+
+对话历史：
+${history}
+当前用户输入：${userInput}
+原有状态：${JSON.stringify(context.value.patient_state)}`
+
+    try {
+      // 使用较低配额或快速的模型进行状态提取
+      const res = await callWithFallback(prompt, "UPDATE_JSON", [], [], { role: 'NURSE' })
+      const match = res.match(/\{[\s\S]*\}/)
+      if (match) {
+        context.value.patient_state = JSON.parse(match[0])
+      }
+    } catch (e) {
+      console.warn('[State Analyzer] Update failed', e)
+    }
+  }
+
   // ── 核心流程 ─────────────────────────────────────
 
-  // 第一幕：护士问诊
-  async function startIntake(userSymptoms) {
+  // 第一幕：护士初诊阶段
+  async function startNurseIntake(userSymptoms) {
     context.value.symptoms = userSymptoms
     addMessage('user', userSymptoms)
     setLoading(true)
 
     try {
-      const prompt = await buildStagePrompt(
-        CONSULT_STAGES.INTAKE, 'general', language.value
+      await updatePatientState(userSymptoms)
+      const introPrompt = await buildStagePrompt(
+        CONSULT_STAGES.NURSE, 'general', language.value,
+        { patient_state: context.value.patient_state }
       )
-      const response = await callWithFallback(prompt, userSymptoms, [])
-      addMessage('nurse', response, {
+      const response = await callWithFallback(introPrompt, userSymptoms, [], [], { role: 'NURSE' })
+      
+      addMessage('moderator', response.replace('[TO_ATTENDING]', '').trim(), {
         doctorName: language.value === 'zh' ? '护士小慧' : 'Nurse Xiao Hui',
         emoji: '👩‍⚕️',
-        stage: CONSULT_STAGES.INTAKE
+        stage: CONSULT_STAGES.NURSE
       })
-      stage.value = CONSULT_STAGES.INTAKE
+      stage.value = CONSULT_STAGES.NURSE
     } finally {
       setLoading(false)
     }
   }
 
-  // 用户回答护士问题后，进入分诊
-  async function submitIntakeAnswers(userAnswers) {
-    context.value.intake_answers = userAnswers
+  // 处理护士多轮问诊交互
+  async function submitNurseAnswers(userAnswers) {
     addMessage('user', userAnswers)
     setLoading(true)
 
     try {
-      // 全科医生分诊
-      const fullContext = `症状：${context.value.symptoms}\n用户补充：${userAnswers}`
-      const routingPrompt = await buildStagePrompt(
-        CONSULT_STAGES.ROUTING, 'general', language.value
+      await updatePatientState(userAnswers)
+      
+      const nurseHistory = messages.value
+        .filter(m => m.meta.stage === CONSULT_STAGES.NURSE || m.role === 'user')
+        .slice(-6)
+
+      const prompt = await buildStagePrompt(
+        CONSULT_STAGES.NURSE, 'general', language.value,
+        { patient_state: context.value.patient_state }
       )
-      const routingResponse = await callWithFallback(routingPrompt, fullContext, [])
+      
+      const response = await callWithFallback(
+        prompt, 
+        userAnswers, 
+        nurseHistory, 
+        [], 
+        { role: 'NURSE' }
+      )
 
-      addMessage('moderator', routingResponse, {
-        doctorName: language.value === 'zh' ? '张医生（全科）' : 'Dr. Zhang (GP)',
-        emoji: '🩺',
-        stage: CONSULT_STAGES.ROUTING
-      })
+      const isFinished = response.includes('[TO_ATTENDING]')
+      const cleanResponse = response.replace('[TO_ATTENDING]', '').trim()
 
-      // 检测相关专科
-      const autoDetected = detectRelevantRoles(fullContext)
-      // 限制最多2位专科
-      context.value.invited_roles = autoDetected.slice(0, 2)
+      if (cleanResponse) {
+        addMessage('moderator', cleanResponse, {
+          doctorName: language.value === 'zh' ? '护士小慧' : 'Nurse Xiao Hui',
+          emoji: '👩‍⚕️',
+          stage: CONSULT_STAGES.NURSE
+        })
+      }
 
-      stage.value = CONSULT_STAGES.CONSULTING
-      // 自动开始专科会诊
-      await runConsultingRound()
+      if (isFinished) {
+        writeLog('[STAGE] Nurse intake completed, transitioning to Attending.')
+        await startAttending()
+      }
+    } catch (e) {
+      console.error('[Flow] Interaction failed', e)
     } finally {
       setLoading(false)
     }
   }
 
+  // 第二幕：主治医生深挖与决策
+  async function startAttending() {
+    setLoading(true)
+    stage.value = CONSULT_STAGES.ATTENDING
+    try {
+      // 获取 RAG
+      context.value.rag_knowledge = await getRAGContext()
+
+      const transitionMsg = language.value === 'zh' 
+        ? '已将您的初诊信息同步给主治张医生，请稍候。' 
+        : 'Your initial info has been synced to Dr. Zhang. Please wait.'
+      
+      addMessage('system', transitionMsg, { emoji: '🔄', stage: CONSULT_STAGES.ATTENDING })
+
+      const prompt = await buildStagePrompt(
+        CONSULT_STAGES.ATTENDING, 'general', language.value,
+        { patient_state: context.value.patient_state, rag_info: context.value.rag_knowledge }
+      )
+      
+      const response = await callWithFallback(prompt, "护士已完成初诊收集，请主治医生开始接诊。", [], [], { role: 'ATTENDING' })
+      
+      await handleAttendingResponse(response)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 处理主治医生多轮问诊交互
+  async function submitAttendingAnswers(userAnswers) {
+    addMessage('user', userAnswers)
+    setLoading(true)
+
+    try {
+      await updatePatientState(userAnswers)
+      
+      const attendingHistory = messages.value
+        .filter(m => m.meta.stage === CONSULT_STAGES.ATTENDING || m.role === 'user')
+        .slice(-6)
+
+      const prompt = await buildStagePrompt(
+        CONSULT_STAGES.ATTENDING, 'general', language.value,
+        { patient_state: context.value.patient_state, rag_info: context.value.rag_knowledge }
+      )
+      
+      const response = await callWithFallback(
+        prompt, 
+        userAnswers, 
+        attendingHistory, 
+        [], 
+        { role: 'ATTENDING' }
+      )
+
+      await handleAttendingResponse(response)
+    } catch (e) {
+      console.error('[Flow] Interaction failed', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 统一解析主治医生响应
+  async function handleAttendingResponse(response) {
+    const isToSummary = response.includes('[TO_SUMMARY]')
+    let matchSummon = response.match(/\[SUMMON:(.*?)\]/)
+    let cleanResponse = response.replace(/\[SUMMON:.*?\]/g, '').replace(/\[TO_SUMMARY\]/g, '').trim()
+
+    if (cleanResponse) {
+      addMessage('moderator', cleanResponse, {
+        doctorName: language.value === 'zh' ? '张医生（主治）' : 'Dr. Zhang (Attending)',
+        emoji: '🩺',
+        stage: CONSULT_STAGES.ATTENDING
+      })
+    }
+
+    if (matchSummon && matchSummon[1]) {
+      const expertsRaw = matchSummon[1]
+      writeLog(`[STAGE] Attending summoned experts: ${expertsRaw}`)
+      
+      // 检测具体科室
+      const rolesToInvite = []
+      Object.entries(DOCTOR_ROLES).forEach(([key, docRole]) => {
+        if (key === 'general') return
+        const nameZh = docRole.name_zh || ''
+        const nameEn = docRole.name_en || ''
+        if (expertsRaw.includes(nameZh) || expertsRaw.includes(nameEn)) {
+          rolesToInvite.push(key)
+        }
+      })
+      
+      context.value.invited_roles = rolesToInvite
+      if (rolesToInvite.length > 0) {
+        await startConsulting()
+        return
+      } else {
+        writeLog('[WARNING] Summoned unknown specialists. Falling back to summary.')
+        await runSummary()
+      }
+    } else if (isToSummary) {
+      writeLog('[STAGE] Attending finished, going to summary.')
+      await runSummary()
+    }
+  }
+
   // 第三幕：专科医生依次发言
-  async function runConsultingRound() {
+  async function startConsulting() {
+    stage.value = CONSULT_STAGES.CONSULTING
     const rolesToSpeak = context.value.invited_roles
+    
     if (rolesToSpeak.length === 0) {
       await runSummary()
       return
     }
 
-    const fullSymptoms = `症状：${context.value.symptoms}\n补充：${context.value.intake_answers}`
+    const sysMsg = language.value === 'zh'
+      ? `正在为您召唤专家团队：${rolesToSpeak.map(k=>DOCTOR_ROLES[k].name_zh).join('、')}...`
+      : `Summoning experts: ${rolesToSpeak.map(k=>DOCTOR_ROLES[k].name_en).join(', ')}...`
+    
+    addMessage('system', sysMsg, { emoji: '🔄', stage: CONSULT_STAGES.CONSULTING })
 
     for (const roleKey of rolesToSpeak) {
       setLoading(true)
@@ -129,111 +306,33 @@ export const useChatStore = defineStore('chat', () => {
             const r = DOCTOR_ROLES[k]
             const name = language.value === 'zh' ? r.name_zh : r.name_en
             return `${name}：${v}`
-          })
+          }).join('\n')
 
         const consultPrompt = await buildStagePrompt(
           CONSULT_STAGES.CONSULTING,
           roleKey,
           language.value,
-          { previous_opinions: previousOpinions, symptoms: context.value.symptoms }
+          { previous_opinions: previousOpinions, patient_state: context.value.patient_state, rag_info: context.value.rag_knowledge }
         )
 
-        const response = await callWithFallback(consultPrompt, fullSymptoms, [])
+        const response = await callWithFallback(consultPrompt, "请基于现有病例给出你的专业意见。", [], [], { role: 'CONSULTING' })
         context.value.opinions[roleKey] = response
 
-        const role = DOCTOR_ROLES[roleKey]
+        const currentRoleInfo = DOCTOR_ROLES[roleKey]
         addMessage(roleKey, response, {
-          doctorName: language.value === 'zh' ? role.name_zh : role.name_en,
-          emoji: role.emoji,
+          doctorName: language.value === 'zh' ? currentRoleInfo.name_zh : currentRoleInfo.name_en,
+          emoji: currentRoleInfo.emoji,
           stage: CONSULT_STAGES.CONSULTING
         })
 
-        await new Promise(r => setTimeout(r, 800))
+        await delay(1500)
       } finally {
         setLoading(false)
       }
     }
 
-    await checkAndRunDebate()
-  }
-
-  // 第四幕：辩论（仅在有分歧时）
-  async function checkAndRunDebate() {
-    const opinionsText = Object.entries(context.value.opinions)
-      .map(([k, v]) => {
-        const r = DOCTOR_ROLES[k]
-        return `${r.name_zh}：${v}`
-      }).join('\n\n')
-
-    const detectPrompt = language.value === 'zh'
-      ? `以下是各位医生的意见：\n${opinionsText}\n\n请判断：各位医生之间是否存在明显分歧或矛盾？如果有，用一句话描述分歧点，格式：「分歧：xxx」如果没有，只回复：「无分歧」`
-      : `Here are the doctors' opinions:\n${opinionsText}\n\nIs there a clear disagreement? If yes, describe it in one sentence: "Dispute: xxx" If no, reply only: "No dispute"`
-
-    setLoading(true)
-    try {
-      const detectResult = await callWithFallback(
-        await buildStagePrompt(CONSULT_STAGES.ROUTING, 'general', language.value),
-        detectPrompt, []
-      )
-
-      const hasDispute = language.value === 'zh'
-        ? detectResult.includes('分歧：')
-        : detectResult.toLowerCase().includes('dispute:')
-
-      if (hasDispute) {
-        const disputeTopic = language.value === 'zh'
-          ? detectResult.split('分歧：')[1]?.trim()
-          : detectResult.split('Dispute:')[1]?.trim()
-
-        context.value.disputes.push(disputeTopic)
-
-        const announceText = language.value === 'zh'
-          ? `我注意到各位医生在「${disputeTopic}」这个问题上有不同看法。让我们来听听各位的具体立场。`
-          : `I notice the doctors have different views on "${disputeTopic}". Let's hear each position.`
-
-        addMessage('moderator', announceText, {
-          doctorName: language.value === 'zh' ? '张医生（全科）' : 'Dr. Zhang (GP)',
-          emoji: '🩺',
-          stage: CONSULT_STAGES.DEBATE
-        })
-
-        for (const roleKey of context.value.invited_roles) {
-          const debatePrompt = await buildStagePrompt(
-            CONSULT_STAGES.DEBATE, roleKey, language.value,
-            { dispute_topic: disputeTopic, symptoms: context.value.symptoms }
-          )
-          const debateResponse = await callWithFallback(
-            debatePrompt,
-            `关于分歧点：${disputeTopic}，你的立场是？`, []
-          )
-          const role = DOCTOR_ROLES[roleKey]
-          addMessage(roleKey, debateResponse, {
-            doctorName: language.value === 'zh' ? role.name_zh : role.name_en,
-            emoji: role.emoji,
-            stage: CONSULT_STAGES.DEBATE
-          })
-          await new Promise(r => setTimeout(r, 600))
-        }
-
-        const verdictPrompt = language.value === 'zh'
-          ? `针对「${disputeTopic}」的分歧，综合各位意见，给出你作为全科医生的最终裁决，不超过80字。`
-          : `Regarding the dispute on "${disputeTopic}", give your final verdict as GP. Under 60 words.`
-
-        const verdictResponse = await callWithFallback(
-          await buildStagePrompt(CONSULT_STAGES.ROUTING, 'general', language.value),
-          verdictPrompt, []
-        )
-        addMessage('moderator', verdictResponse, {
-          doctorName: language.value === 'zh' ? '张医生（全科·裁决）' : 'Dr. Zhang (GP · Verdict)',
-          emoji: '⚖️',
-          stage: CONSULT_STAGES.DEBATE
-        })
-      }
-    } finally {
-      setLoading(false)
-    }
-
-    await openInteraction()
+    // 专家会诊结束后，自动进入主治医生总结
+    await runSummary()
   }
 
   // 第五幕：开放追问
@@ -250,39 +349,43 @@ export const useChatStore = defineStore('chat', () => {
     stage.value = CONSULT_STAGES.INTERACT
   }
 
-  // 用户追问处理
+  // 用户追问处理（全局分发）
   async function handleUserInteraction(userMessage) {
     if (!userMessage.trim()) return
-    addMessage('user', userMessage)
-
-    const wantsSummary = ['结论','总结','没有','没问题','好了','give me','summary','no question']
-      .some(kw => userMessage.toLowerCase().includes(kw))
-
-    if (wantsSummary) {
-      await runSummary()
+    
+    // 如果在护士阶段
+    if (stage.value === CONSULT_STAGES.NURSE) {
+      await submitNurseAnswers(userMessage)
+      return
+    }
+    
+    // 如果在主治问路阶段
+    if (stage.value === CONSULT_STAGES.ATTENDING) {
+      await submitAttendingAnswers(userMessage)
       return
     }
 
+    // 否则作为总结阶段或交互阶段的自由追问交给主治医生
+    addMessage('user', userMessage)
     setLoading(true)
     try {
-      let targetRole = 'general'
-      Object.entries(DOCTOR_ROLES).forEach(([key, role]) => {
-        if (userMessage.includes(role.name_zh) || userMessage.includes(role.name_en)) {
-          targetRole = key
-        }
-      })
-
-      const interactPrompt = await buildStagePrompt(
-        CONSULT_STAGES.INTERACT, targetRole, language.value
+      const prompt = await buildStagePrompt(
+        CONSULT_STAGES.SUMMARY, 'general', language.value,
+        { patient_state: context.value.patient_state, opinions: context.value.opinions, rag_info: context.value.rag_knowledge }
       )
-      const fullContext = `用户原始症状：${context.value.symptoms}\n用户追问：${userMessage}`
-      const response = await callWithFallback(interactPrompt, fullContext, [])
+      
+      const response = await callWithFallback(
+        prompt, 
+        userMessage, 
+        messages.value.slice(-6), 
+        [], 
+        { role: 'SUMMARY' }
+      )
 
-      const role = DOCTOR_ROLES[targetRole]
-      addMessage(targetRole, response, {
-        doctorName: language.value === 'zh' ? role.name_zh : role.name_en,
-        emoji: role.emoji,
-        stage: CONSULT_STAGES.INTERACT
+      addMessage('moderator', response, {
+        doctorName: language.value === 'zh' ? '张医生（主治）' : 'Dr. Zhang (Attending)',
+        emoji: '🩺',
+        stage: CONSULT_STAGES.SUMMARY
       })
     } finally {
       setLoading(false)
@@ -295,16 +398,19 @@ export const useChatStore = defineStore('chat', () => {
     stage.value = CONSULT_STAGES.SUMMARY
     try {
       const allContext = `
-        症状：${context.value.symptoms}
-        补充信息：${context.value.intake_answers}
-        各医生意见：${JSON.stringify(context.value.opinions)}
-        分歧与裁决：${context.value.disputes.join('；') || '无分歧'}
+        用户最初主述：${context.value.symptoms}
+        医生提取的完整病历记录：${JSON.stringify(context.value.patient_state)}
+        各专科医生意见（如有）：${JSON.stringify(context.value.opinions)}
+        分歧与裁决（如有）：${context.value.disputes.join('；') || '无分歧'}
       `
       const summaryPrompt = await buildStagePrompt(
         CONSULT_STAGES.SUMMARY, 'general', language.value,
-        { symptoms: context.value.symptoms }
+        { rag_info: context.value.rag_knowledge, patient_state: context.value.patient_state, opinions: context.value.opinions }
       )
-      const response = await callWithFallback(summaryPrompt, allContext, [])
+      
+      const summaryHistory = messages.value.slice(-8) // 引入最近沟通记录，防提问重复问题
+      
+      const response = await callWithFallback(summaryPrompt, allContext, summaryHistory, [], { role: 'SUMMARY' })
       addMessage('moderator', response, {
         doctorName: language.value === 'zh' ? '张医生（全科·总结）' : 'Dr. Zhang (GP · Summary)',
         emoji: '📋',
@@ -318,11 +424,16 @@ export const useChatStore = defineStore('chat', () => {
   // 重置会诊
   function resetConsult() {
     messages.value      = []
-    stage.value         = CONSULT_STAGES.INTAKE
+    stage.value         = CONSULT_STAGES.NURSE
     context.value       = {
       symptoms: '', intake_answers: '',
       invited_roles: [], opinions: {},
-      disputes: [], consult_round: 0
+      disputes: [], consult_round: 0,
+      rag_knowledge: '',
+      patient_state: {
+        symptoms: '', history: '', medications: '',
+        lifestyle: '', allergies: ''
+      }
     }
   }
 
@@ -332,8 +443,10 @@ export const useChatStore = defineStore('chat', () => {
     isLoading,
     language,
     context,
-    startIntake,
-    submitIntakeAnswers,
+    startNurseIntake,
+    submitNurseAnswers,
+    startAttending,
+    submitAttendingAnswers,
     handleUserInteraction,
     runSummary,
     resetConsult,

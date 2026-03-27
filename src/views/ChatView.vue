@@ -8,30 +8,43 @@ const userInput = ref('')
 const messageContainer = ref(null)
 
 const placeholder = computed(() => {
-  if (chatStore.stage === chatStore.CONSULT_STAGES.INTAKE) {
+  if (chatStore.stage === chatStore.CONSULT_STAGES.NURSE) {
     return chatStore.messages.length === 0 ? '请描述你的症状...' : '请回答护士的问题...'
+  }
+  if (chatStore.stage === chatStore.CONSULT_STAGES.ATTENDING) {
+    return '请回复张医师的追问...'
   }
   if (chatStore.stage === chatStore.CONSULT_STAGES.INTERACT) {
     return '有什么想追问的？或回复「给我结论」'
   }
   if (chatStore.stage === chatStore.CONSULT_STAGES.SUMMARY) {
-    return '本次会诊已结束，点击右上角开始新的会诊'
+    return '本次会诊已结束，点击右上角开始新会诊'
   }
   return '正在会诊中...'
 })
 
+const isProcessing = ref(false)
+
 const handleSendMessage = async () => {
-  if (!userInput.value.trim() || chatStore.isLoading) return
+  if (!userInput.value.trim() || chatStore.isLoading || isProcessing.value) return
   
   const text = userInput.value
   userInput.value = ''
+  isProcessing.value = true
 
-  if (chatStore.messages.length === 0) {
-    await chatStore.startIntake(text)
-  } else if (chatStore.stage === chatStore.CONSULT_STAGES.INTAKE) {
-    await chatStore.submitIntakeAnswers(text)
-  } else {
-    await chatStore.handleUserInteraction(text)
+  try {
+    // 核心调用流，任何一步失败都会进入 catch
+    if (chatStore.messages.length === 0) {
+      await chatStore.startNurseIntake(text)
+    } else {
+      await chatStore.handleUserInteraction(text)
+    }
+  } catch (err) {
+    console.error("[ChatView] Consultation flow interrupted:", err)
+  } finally {
+    // 强制冷却 2 秒，防止快速点击或连续调用触发 429
+    await new Promise(r => setTimeout(r, 2000))
+    isProcessing.value = false
   }
 }
 
@@ -93,12 +106,12 @@ watch(() => chatStore.messages.length, async () => {
           v-model="userInput"
           @keyup.enter="handleSendMessage"
           :placeholder="placeholder"
-          :disabled="chatStore.isLoading || chatStore.stage === chatStore.CONSULT_STAGES.SUMMARY"
+          :disabled="chatStore.isLoading || isProcessing"
           class="flex-1 bg-transparent border-none focus:ring-0 text-gray-800 text-md py-1 disabled:opacity-50"
         />
         <button 
           @click="handleSendMessage"
-          :disabled="chatStore.isLoading || chatStore.stage === chatStore.CONSULT_STAGES.SUMMARY"
+          :disabled="chatStore.isLoading || isProcessing"
           class="bg-blue-600 p-2.5 rounded-xl text-white disabled:bg-gray-400 transition-colors shadow-sm active:scale-95"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 rotate-90" viewBox="0 0 20 20" fill="currentColor">
