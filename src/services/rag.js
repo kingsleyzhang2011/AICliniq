@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js'
+import { callWithFallback } from './ai.js'
 
 // --- Voyage AI Configuration ---
 const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
@@ -84,23 +85,23 @@ export async function retrieveKnowledge(symptoms, language = 'zh', topK = 5) {
     // 两路并行：向量检索 + MedlinePlus实时API
     const [vectorResult, apiResult] = await Promise.allSettled([
       
-      // 来源1：Supabase 向量检索（MeSH 2026 + MedlinePlus已存储）+ 5秒超时
+      // 来源1：Supabase 向量检索（MeSH 2026 + MedlinePlus已存储）+ 10秒超时
       Promise.race([
         supabase.rpc('match_documents', {
           query_embedding: embedding,
           match_threshold: 0.3,
           match_count: topK
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase RPC 超时(5s)')), 5000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Supabase RPC 超时(10s)')), 10000))
       ]),
 
-      // 来源2：MedlinePlus 实时API（通过Vercel代理）
+      // 来源2：MedlinePlus 实时API（通过Vercel代理），需要传入经过翻译的英文 queryText
       Promise.race([
-        fetch(`/api/medlineplus?type=keyword&keyword=${encodeURIComponent(symptoms)}&max=2`)
+        fetch(`/api/medlineplus?type=keyword&keyword=${encodeURIComponent(queryText)}&max=2`)
           .then(r => r.json())
           .then(json => json.success ? json.data : [])
           .catch(() => []),
-        new Promise(resolve => setTimeout(() => resolve([]), 3000)) // 3秒超时
+        new Promise(resolve => setTimeout(() => resolve([]), 5000)) // 5秒超时
       ])
     ])
     console.log('[RAG] 并行检索完成 - vector:', vectorResult.status, ', api:', apiResult.status)
@@ -213,29 +214,14 @@ export async function ingestMedlinePlus(topicKeywords) {
 // ── 中文翻译工具（用于 RAG 检索前预处理）────────────────
 async function translateToEnglish(text) {
   try {
-    // 优先从环境变量获取，适配多种命名习惯
-    const apiKey = import.meta.env?.VITE_GEMINI_KEY || import.meta.env?.VITE_GEMINI_API_KEY
-    if (!apiKey) return text
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `Translate the following Chinese medical symptoms to English medical terms only. Return only the English translation, no explanation:\n${text}`
-            }]
-          }]
-        })
-      }
-    )
-    const data = await res.json()
-    const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+    const prompt = `Translate the following Chinese medical symptoms to English medical terms only. Return ONLY the translation, no explanation, no prefixes, no quotes.`
+    // 使用 callWithFallback，利用它的多路降级能力对抗 429
+    const res = await callWithFallback(prompt, text, [], [], { role: 'SUMMARY' })
+    const translated = res.trim()
     return translated || text
   } catch (e) {
     console.warn('[RAG] 翻译失败，使用原文:', e.message)
     return text
   }
 }
+
