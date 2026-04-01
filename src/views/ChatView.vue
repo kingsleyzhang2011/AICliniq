@@ -127,6 +127,16 @@
           <span class="material-symbols-outlined text-xl" :style="isRecording ? 'font-variation-settings:\'FILL\' 1' : ''">mic</span>
         </button>
 
+        <!-- Video Call button (NEW) -->
+        <button
+          @click="showVideoModal = true"
+          class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center bg-surface-container-high text-primary hover:bg-surface-container-highest transition-all duration-150 active:scale-90 shadow-sm"
+          :title="$t('app.videoConsult') || 'Video Consult'"
+          aria-label="Video Consult"
+        >
+          <span class="material-symbols-outlined text-xl">videocam</span>
+        </button>
+
         <!-- Text input -->
         <input
           v-model="userInput"
@@ -177,6 +187,9 @@
       </a>
     </nav>
 
+    <!-- Video Modal Overlay -->
+    <VideoCallModal v-if="showVideoModal" @close="showVideoModal = false" />
+
   </div>
 </template>
 
@@ -186,6 +199,7 @@ import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/useChatStore'
 import { useUserStore } from '../stores/useUserStore'
 import ChatBubble from '../components/chat/ChatBubble.vue'
+import VideoCallModal from '../components/chat/VideoCallModal.vue'
 import { DOCTOR_ROLES } from '../services/ai'
 import { useI18n } from 'vue-i18n'
 
@@ -198,6 +212,7 @@ const userInput = ref('')
 const messageContainer = ref(null)
 const isProcessing = ref(false)
 const isRecording  = ref(false)
+const showVideoModal = ref(false)
 
 // ── Placeholder text based on current stage ───────────────────────────────
 const placeholder = computed(() => {
