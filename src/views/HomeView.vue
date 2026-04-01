@@ -13,6 +13,10 @@
           <a class="text-primary font-bold transition-all hover:text-primary-container cursor-pointer" @click="handleNavigate('/home')">{{ $t('app.home') }}</a>
           <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/chat')">{{ $t('app.consult') }}</a>
           <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/history')">{{ $t('app.records') }}</a>
+          <a class="text-primary/70 font-medium flex items-center gap-1 transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/pricing')">
+            <span class="material-symbols-outlined text-sm text-secondary-fixed-dim" v-if="userStore.isPro">verified</span>
+            {{ userStore.isPro ? 'Pro 尊享' : '升级计划' }}
+          </a>
           <a class="text-primary/70 font-medium transition-all hover:text-primary cursor-pointer" @click="handleNavigate('/settings')">{{ $t('app.about') }}</a>
         </div>
 
@@ -127,7 +131,7 @@
             <p class="text-outline text-lg">{{ $t('home.heroDesc') }}</p>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-12 gap-6 h-auto md:h-[800px]">
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-6 h-auto">
             <!-- Large Feature: Multi-expert debate -->
             <div 
               @click="handleNavigate('/chat')"
@@ -141,7 +145,7 @@
                 <p class="text-outline leading-relaxed">{{ $t('home.features.team.desc') }}</p>
               </div>
               <div class="mt-12 rounded-lg overflow-hidden relative min-h-48 md:min-h-0">
-                <img alt="Consultation" class="w-full h-full object-cover grayscale opacity-20 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuABT8smetXulvfwRA4afbzs28NmOnxKO4TZccUwx8nuPZKldd4Z3TDbNS9NW2HnGUUt8uJKQCCmqpPSH0pcEeRfpgS5hLkstchVqAeVFJfpx0WzcX33jEH3wT9dXhatCK7gbWlDuMT5Gi_GRTXdL3dvH-JymPpXiVr4utp9O_OtYXwoAPGwSX7KC5hOL-nGXd5kxg_shs9ed52C6n83L8SpPdqFLChFPk1KACvMEE0ZaBWrFQJHFnS0Y1aflrTp9k1QeSbUjlXT2ial">
+                <img alt="Consultation" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-110 transition-all duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuABT8smetXulvfwRA4afbzs28NmOnxKO4TZccUwx8nuPZKldd4Z3TDbNS9NW2HnGUUt8uJKQCCmqpPSH0pcEeRfpgS5hLkstchVqAeVFJfpx0WzcX33jEH3wT9dXhatCK7gbWlDuMT5Gi_GRTXdL3dvH-JymPpXiVr4utp9O_OtYXwoAPGwSX7KC5hOL-nGXd5kxg_shs9ed52C6n83L8SpPdqFLChFPk1KACvMEE0ZaBWrFQJHFnS0Y1aflrTp9k1QeSbUjlXT2ial">
               </div>
             </div>
 

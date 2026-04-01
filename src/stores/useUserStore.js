@@ -23,6 +23,14 @@ export const useUserStore = defineStore('user', () => {
     return profile.value?.preferred_language || 'zh'
   })
 
+  const planType = computed(() => {
+    return profile.value?.plan_type || 'free'
+  })
+
+  const isPro = computed(() => {
+    return planType.value === 'pro'
+  })
+
   // --- Actions ---
 
   /**
@@ -247,6 +255,8 @@ export const useUserStore = defineStore('user', () => {
     isLoggedIn,
     displayName,
     preferredLanguage,
+    planType,
+    isPro,
     // Actions
     init,
     login,

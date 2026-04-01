@@ -50,6 +50,12 @@ const routes = [
     meta: { public: true }
   },
   {
+    path: '/pricing',
+    name: 'Pricing',
+    component: () => import('../views/PricingView.vue'),
+    meta: { public: true }
+  },
+  {
     // 登录/注册入口 —— 公开路由
     path: '/login',
     name: 'Login',
