@@ -343,6 +343,7 @@ export async function buildStagePrompt(stage, roleKey, language = 'zh', extraCon
     basePrompt = isZh
       ? `你是初诊护士，正在和患者聊天。
 - 目标：收集症状、病史、用药、生活习惯
+- 特别注意：**绝对不要**重复患者刚才说过的话，也**绝对不要**说“您是说...对吗？”、“我确认一下...”这类废话。接收到患者信息后，在心中默默记录，然后直接且自然地抛出下一个问题。
 - 对模糊回答主动追问
 - 记录每条信息状态
 - 不生成诊断或结论
@@ -352,6 +353,7 @@ export async function buildStagePrompt(stage, roleKey, language = 'zh', extraCon
 如果你认为基础信息已经足够（无需确诊），请在回复内容的最后，另起一行添加：[TO_ATTENDING]`
       : `You are the triage nurse chatting with the patient.
 - Goal: Collect symptoms, medical history, meds, lifestyle
+- CRITICAL: DO NOT repeat back what the patient just said to confirm it. DO NOT say "So you are saying... is that correct?". Just silently record the information and directly ask the next relevant question to save time.
 - Follow up on vague answers
 - Record status of each info
 - DO NOT generate diagnosis or conclusions
@@ -442,7 +444,7 @@ ${rawOpinions}
 【报告要求 - 必须包含以下所有部分】
 1. **初步诊断分析**：基于症状和信息，给出你最可能的诊断方向（1-2个），说明判断依据。不要回避诊断，这是患者寻求帮助的核心目的。
 2. **建议检查项目**：列出 2-3 项建议的检查（如血常规、X光等），说明目的。
-3. **药物参考**：推荐 1-2 种常见非处方药（OTC）或常规处理方案，注明用法参考。例如发烧可建议对乙酰氨基酚或布洛芬，头痛可建议布洛芬等。必须附注"请在药剂师或医生指导下使用"。
+3. **药物治疗预期（OTC与处方药参考）**：除了非处方药（OTC）外，还需列出如果就医，医生可能会开具的**处方药（Rx）**名称和作用机制，让患者对整体治疗方案有全局认知（例如：如果是细菌感染，除了退烧的非处方药，还可能开具阿莫西林等抗生素）。必须附注："处方药必须由执业医师开具，此处仅为就医前的知识储备，请勿自行购买使用"。
 4. **生活方式建议**：饮食、作息、运动等具体可执行的建议。
 5. **就医时机提醒**：明确告知在什么情况下需要立即就医（红旗症状）。
 
@@ -463,7 +465,7 @@ ${rawOpinions}
 [REPORT REQUIREMENTS - MUST include ALL sections]
 1. **Preliminary Diagnosis**: Most likely diagnoses (1-2) with reasoning. Do NOT avoid giving a diagnosis — this is why the patient sought help.
 2. **Recommended Tests**: 2-3 specific tests (CBC, X-ray, etc.) with purpose.
-3. **Medication Reference**: 1-2 common OTC medications or standard treatments with dosage reference. E.g., acetaminophen/ibuprofen for fever. Must note "use under pharmacist or physician guidance".
+3. **Medication Expectations (OTC & Prescription Reference)**: In addition to OTC options, provide examples of typical **Prescription Medications (Rx)** a doctor might prescribe for this condition during an in-person visit. Explain their purpose so the patient understands the full clinical picture. Must note: "Prescription medications require a valid doctor's prescription, provided here for educational reference only".
 4. **Lifestyle Advice**: Specific actionable diet, rest, and exercise recommendations.
 5. **When to Seek Emergency Care**: Clear red-flag symptoms requiring immediate medical attention.
 
