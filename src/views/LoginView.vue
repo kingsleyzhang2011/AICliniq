@@ -359,7 +359,7 @@ async function handleGoogleLogin() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}${route.query.redirect || '/'}`
+        redirectTo: window.location.origin // 简化重定向路径，依靠 onMounted 的 redirectLogic 处理后续跳转
       }
     })
     if (error) throw error
@@ -373,8 +373,15 @@ async function handleGoogleLogin() {
 
 // ── Handle OAuth / magic-link callback on mount ───────────────────────────
 onMounted(async () => {
+  // 检查是否已经通过 main.js -> userStore.init() 恢复了 session
+  if (userStore.isLoggedIn) {
+     redirectAfterLogin()
+     return
+  }
+  
+  // 备选：如果 init 慢了，或者从 OAuth 回来，再次尝试显式恢复
   const { data: { session } } = await supabase.auth.getSession()
-  if (session?.user && !userStore.isLoggedIn) {
+  if (session?.user) {
     userStore.user = session.user
     await userStore.fetchProfile()
     redirectAfterLogin()

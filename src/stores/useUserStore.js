@@ -162,18 +162,32 @@ export const useUserStore = defineStore('user', () => {
         .eq('user_id', user.value.id)
         .single()
 
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        // PGRST116 = no rows found, 说明 profile 尚未创建
+      if (fetchError && fetchError.code === 'PGRST116') {
+        // PGRST116 = no rows found, 说明 profile 尚未创建，自动创建一个
+        const { data: newData, error: upsertError } = await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: user.value.id,
+            preferred_language: i18n.global.locale?.value || 'zh',
+            region: 'overseas'
+          }, { onConflict: 'user_id' })
+          .select()
+          .single()
+        
+        if (upsertError) throw upsertError
+        profile.value = newData
+      } else if (fetchError) {
         throw fetchError
+      } else {
+        profile.value = data || null
       }
 
-      profile.value = data || null
       // Sync i18n locale with user preference on load
-      if (data?.preferred_language) {
-        i18n.global.locale.value = data.preferred_language
+      if (profile.value?.preferred_language) {
+        i18n.global.locale.value = profile.value.preferred_language
       }
     } catch (err) {
-      console.error('[LifeGuard] Fetch profile failed:', err)
+      console.error('[LifeGuard] Fetch/Create profile failed:', err)
     }
   }
 
