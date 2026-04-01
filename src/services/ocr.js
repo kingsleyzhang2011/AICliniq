@@ -78,7 +78,7 @@ export async function extractHealthData(base64Data, mimeType) {
   }]
 
   // 调用封装好的多轨大模型接口，底层会自动将 attachments 转化为 inlineData 发给 Gemini
-  const responseText = await callWithFallback(systemPrompt, userPrompt, [], attachments)
+  const responseText = await callWithFallback(systemPrompt, userPrompt, [], attachments, { role: 'OCR' })
 
   try {
     // 尝试清洗可能的 markdown 标签

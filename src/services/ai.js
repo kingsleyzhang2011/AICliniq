@@ -86,6 +86,13 @@ export function getModelRouting(role = 'SUMMARY') {
         fallback: { provider: 'gemini', model: MODELS.gemini_lite }
       };
       
+    case 'OCR':
+      // 视觉任务必须且只能走 Gemini
+      return { 
+        primary: { provider: 'gemini', model: MODELS.gemini },
+        fallback: { provider: 'gemini', model: MODELS.gemini }
+      };
+      
     case 'ATTENDING':
     case 'ROUTING':
     case 'SUMMARY':

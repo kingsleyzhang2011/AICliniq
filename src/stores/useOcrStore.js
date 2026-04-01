@@ -96,16 +96,6 @@ export const useOcrStore = defineStore('ocr', () => {
     errorMsg.value = ''
 
     try {
-      // 组装符合数据库 schema 的对象
-      const insertData = extractedRecords.value.map(row => ({
-        user_id: userStore.user.id,
-        organization_id: null,
-        indicator_name: row.indicator_name,
-        value: typeof row.value === 'string' ? parseFloat(row.value) || 0 : row.value, // supabase requires numeric, fallback to 0 if text like '阴性' (for now) -- wait, DB requires NUMERIC. Let's make sure strings are ignored or we change schema?
-        // 应对一些非数字的情况（如阴性），如果是纯非数字会报错。为稳妥起见我们只保存可转换为数字的或者后端自动转
-        // 由于 Schema 锁定了 value NUMERIC 字段，所以遇到 '阴性' 必须转换为某个约定数字或剥离。但此处直接 parseFloat，非法则赋 0
-      }))
-
       // 正式处理：对于字符串如"阴性"，数据库 NUMERIC 会抱错。我们需要尝试提纯数字。
       const refinedInsertData = extractedRecords.value.map(row => {
         let numericValue = 0
@@ -122,6 +112,7 @@ export const useOcrStore = defineStore('ocr', () => {
 
         return {
           user_id: userStore.user.id,
+          organization_id: null, // REQUIRED BY AGENTS.md
           indicator_name: row.indicator_name,
           value: numericValue,
           unit: row.unit || null,
