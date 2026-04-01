@@ -79,11 +79,15 @@ export const useChatStore = defineStore('chat', () => {
       if (!context.value.symptoms) return ''
       console.log('[RAG] getRAGContext 开始...')
 
+      let timeoutId
       // 整体 15 秒超时保护，防止 RAG 流程卡死主流程
       const knowledge = await Promise.race([
-        retrieveKnowledge(context.value.symptoms, language.value),
+        retrieveKnowledge(context.value.symptoms, language.value).then(res => {
+          clearTimeout(timeoutId)
+          return res
+        }),
         new Promise(resolve => {
-          setTimeout(() => {
+          timeoutId = setTimeout(() => {
             console.warn('[RAG] getRAGContext 整体超时(15s)，返回空结果')
             resolve([])
           }, 15000)

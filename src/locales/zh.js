@@ -12,6 +12,7 @@ export default {
     logout: '退出',
     currentUser: '当前账号',
     newConsult: '新会诊',
+    videoConsult: '视频会诊',
     loading: '处理中...',
   },
   disclaimer: {

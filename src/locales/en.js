@@ -12,6 +12,7 @@ export default {
     logout: 'Logout',
     currentUser: 'Current User',
     newConsult: 'New Consult',
+    videoConsult: 'Video Consult',
     loading: 'Processing...',
   },
   disclaimer: {
