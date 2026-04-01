@@ -72,22 +72,46 @@ export default async function handler(req, res) {
     }
   }
 
-  // Handle cancelled or expired subscription
+  // Handle subscription cancellation or deletion
   if (event.type === 'customer.subscription.deleted') {
     const subscription = event.data.object;
     const customerId = subscription.customer;
 
     if (customerId) {
         console.log(`Downgrading subscription for customer ${customerId}`);
-        const { error } = await supabase
+        await supabase
         .from('user_profiles')
         .update({ plan_type: 'free' })
         .eq('stripe_customer_id', customerId);
+    }
+  }
 
-        if (error) {
-            console.error('Failed to downgrade user profile:', error);
-            // Don't fail the webhook on this so Stripe knows it was received
-        }
+  // Handle subscription update (renewals, etc.)
+  if (event.type === 'customer.subscription.updated') {
+    const subscription = event.data.object;
+    const customerId = subscription.customer;
+    const currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString();
+
+    if (customerId) {
+        console.log(`Updating subscription end date for customer ${customerId} to ${currentPeriodEnd}`);
+        await supabase
+        .from('user_profiles')
+        .update({ subscription_end_date: currentPeriodEnd })
+        .eq('stripe_customer_id', customerId);
+    }
+  }
+
+  // Handle invoice payment failed
+  if (event.type === 'invoice.payment_failed') {
+    const invoice = event.data.object;
+    const customerId = invoice.customer;
+
+    if (customerId && invoice.subscription) {
+      console.log(`Payment failed for customer ${customerId}. Marking past due.`);
+      await supabase
+        .from('user_profiles')
+        .update({ plan_type: 'past_due' })
+        .eq('stripe_customer_id', customerId);
     }
   }
 
