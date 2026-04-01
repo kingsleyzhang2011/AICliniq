@@ -164,13 +164,33 @@ async function callGemini(model, apiKey, system, user, history, attachments, sig
 
   const userParts = [{ text: user }, ...attachmentParts]
 
-  const contents = [
+  // 修复 Gemini 历史记录交替角色要求：连续相同角色必须合并
+  const rawContents = [
     ...history.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
+      role: m.role === 'user' ? 'user' : 'model',
+      text: m.role === 'user' ? m.content : `[${m.meta?.doctorName || m.role}]: ${m.content}`
     })),
-    { role: 'user', parts: userParts }
+    { role: 'user', text: user, isLast: true }
   ]
+
+  const contents = []
+  let currentRole = null
+  let currentParts = []
+
+  for (const item of rawContents) {
+    if (item.role === currentRole) {
+      currentParts[0].text += '\n\n' + item.text
+    } else {
+      if (currentRole) contents.push({ role: currentRole, parts: currentParts })
+      currentRole = item.role
+      currentParts = [{ text: item.text }]
+    }
+    // 把图片附件只挂在最后一个 user 消息上
+    if (item.isLast && attachmentParts.length > 0) {
+      currentParts = currentParts.concat(attachmentParts)
+    }
+  }
+  if (currentRole) contents.push({ role: currentRole, parts: currentParts })
 
   const response = await fetch(url, {
     method: 'POST',
@@ -198,7 +218,11 @@ async function callGemini(model, apiKey, system, user, history, attachments, sig
 async function callOpenAICompatible(baseUrl, model, apiKey, system, user, history, attachments, signal) {
   const messages = [
     { role: 'system', content: system },
-    ...history.map(m => ({ role: m.role, content: m.content })),
+    ...history.map(m => {
+      const mappedRole = m.role === 'user' ? 'user' : 'assistant'
+      const prefix = m.role === 'user' ? '' : `[${m.meta?.doctorName || m.role}]: `
+      return { role: mappedRole, content: prefix + m.content }
+    }),
     { role: 'user', content: user }
   ]
 
