@@ -22,6 +22,9 @@ export const useChatStore = defineStore('chat', () => {
   const language      = computed(() => userStore.preferredLanguage)
 
   // 症状上下文（贯穿整个会诊）
+  const MAX_NURSE_ROUNDS = 2  // 护士最多追问轮次（防止 429）
+  const MAX_ATTENDING_ROUNDS = 3 // 主治最多追问轮次
+
   const context = ref({
     symptoms:          '',    // 用户最初描述
     intake_answers:    '',    // 护士问诊后用户的回答
@@ -29,6 +32,8 @@ export const useChatStore = defineStore('chat', () => {
     opinions:          {},    // 各医生的意见 { roleKey: '意见文本' }
     disputes:          [],    // 发现的分歧列表
     consult_round:     0,     // 当前是第几轮
+    nurse_round:       0,     // 护士问诊轮次计数
+    attending_round:   0,     // 主治问诊轮次计数
     rag_knowledge:     '',    // 缓存当前会诊的 RAG 知识
     patient_state: {          // 主治医师收集的结构化病历
       symptoms: '',
@@ -72,13 +77,25 @@ export const useChatStore = defineStore('chat', () => {
   async function getRAGContext() {
     try {
       if (!context.value.symptoms) return ''
-      const knowledge = await retrieveKnowledge(context.value.symptoms, language.value)
+      console.log('[RAG] getRAGContext 开始...')
+
+      // 整体 15 秒超时保护，防止 RAG 流程卡死主流程
+      const knowledge = await Promise.race([
+        retrieveKnowledge(context.value.symptoms, language.value),
+        new Promise(resolve => {
+          setTimeout(() => {
+            console.warn('[RAG] getRAGContext 整体超时(15s)，返回空结果')
+            resolve([])
+          }, 15000)
+        })
+      ])
+
       const formatted = formatKnowledgeContext(knowledge)
-      console.log("[RAG CONTEXT]", formatted || 'No match')
+      console.log('[RAG] getRAGContext 完成，知识条数:', knowledge?.length || 0)
       return formatted || (language.value === 'zh' ? '\n\n暂无匹配的临床指南。' : '\n\nNo matching clinical guidelines found.')
     } catch (e) {
       console.warn('[RAG] Retrieval failed, using fallback notice', e)
-      console.log("[RAG CONTEXT] ERROR FALLBACK")
+      console.log('[RAG] getRAGContext ERROR FALLBACK')
       return language.value === 'zh' ? '\n\n暂无匹配的临床指南。' : '\n\nNo matching clinical guidelines found.'
     }
   }
@@ -138,9 +155,26 @@ ${history}
   async function submitNurseAnswers(userAnswers) {
     addMessage('user', userAnswers)
     setLoading(true)
+    context.value.nurse_round++
+    console.log(`[FLOW] 护士问诊第 ${context.value.nurse_round}/${MAX_NURSE_ROUNDS} 轮`)
 
     try {
       await updatePatientState(userAnswers)
+
+      // 达到最大轮次 → 强制转主治，不再调用 AI 生成护士回复
+      if (context.value.nurse_round >= MAX_NURSE_ROUNDS) {
+        const forceMsg = language.value === 'zh'
+          ? '好的，基本信息已经收集完毕，我现在将您转交给主治张医生。'
+          : 'Alright, basic info collected. Transferring you to Dr. Zhang now.'
+        addMessage('moderator', forceMsg, {
+          doctorName: language.value === 'zh' ? '护士小慧' : 'Nurse Xiao Hui',
+          emoji: '👩‍⚕️',
+          stage: CONSULT_STAGES.NURSE
+        })
+        writeLog(`[STAGE] Nurse max rounds (${MAX_NURSE_ROUNDS}) reached, forcing transition to Attending.`)
+        await startAttending()
+        return
+      }
       
       const nurseHistory = messages.value
         .filter(m => m.meta.stage === CONSULT_STAGES.NURSE || m.role === 'user')
@@ -187,7 +221,9 @@ ${history}
     stage.value = CONSULT_STAGES.ATTENDING
     try {
       // 获取 RAG
+      console.log('[FLOW] startAttending: 开始获取 RAG...')
       context.value.rag_knowledge = await getRAGContext()
+      console.log('[FLOW] startAttending: RAG 获取完成')
 
       const transitionMsg = language.value === 'zh' 
         ? '已将您的初诊信息同步给主治张医生，请稍候。' 
@@ -195,14 +231,19 @@ ${history}
       
       addMessage('system', transitionMsg, { emoji: '🔄', stage: CONSULT_STAGES.ATTENDING })
 
+      console.log('[FLOW] startAttending: 构建提示词...')
       const prompt = await buildStagePrompt(
         CONSULT_STAGES.ATTENDING, 'general', language.value,
         { patient_state: context.value.patient_state, rag_info: context.value.rag_knowledge }
       )
       
+      console.log('[FLOW] startAttending: 调用 AI...')
       const response = await callWithFallback(prompt, "护士已完成初诊收集，请主治医生开始接诊。", [], [], { role: 'ATTENDING' })
+      console.log('[FLOW] startAttending: AI 响应完成，长度:', response?.length)
       
       await handleAttendingResponse(response)
+    } catch (e) {
+      console.error('[FLOW] startAttending 异常:', e)
     } finally {
       setLoading(false)
     }
@@ -212,10 +253,34 @@ ${history}
   async function submitAttendingAnswers(userAnswers) {
     addMessage('user', userAnswers)
     setLoading(true)
+    context.value.attending_round++
 
     try {
       await updatePatientState(userAnswers)
       
+      // 达到最大轮次 -> 强制汇总或召唤会诊
+      if (context.value.attending_round >= MAX_ATTENDING_ROUNDS) {
+        const forceMsg = language.value === 'zh'
+          ? '好的，我已经充分了解了您的情况。接下来我会进行全面评估，并出具一份初步诊断和建议。'
+          : 'Thank you. I have sufficient information to proceed with a preliminary diagnosis and recommendations.'
+        addMessage('moderator', forceMsg, {
+          doctorName: language.value === 'zh' ? '张医生（主治）' : 'Dr. Zhang (Attending)',
+          emoji: '🩺',
+          stage: CONSULT_STAGES.ATTENDING
+        })
+        
+        writeLog(`[STAGE] Attending max rounds (${MAX_ATTENDING_ROUNDS}) reached, forcing transition.`)
+        
+        // 自动判定是否需要专家会诊
+        const autoDetectedRoles = detectRelevantRoles(context.value.patient_state.symptoms + ' ' + context.value.symptoms)
+        if (autoDetectedRoles.length > 0) {
+          await handleAttendingResponse(`[SUMMON:${autoDetectedRoles.join(',')}]`)
+        } else {
+          await handleAttendingResponse('[TO_SUMMARY]')
+        }
+        return
+      }
+
       const attendingHistory = messages.value
         .filter(m => m.meta.stage === CONSULT_STAGES.ATTENDING || m.role === 'user')
         .slice(-6)
@@ -236,6 +301,10 @@ ${history}
       await handleAttendingResponse(response)
     } catch (e) {
       console.error('[Flow] Interaction failed', e)
+      const errorMsg = language.value === 'zh'
+        ? `⚠️ AI 服务暂时不可用（${e.message}），请稍后重新发送您的回复。`
+        : `⚠️ AI service temporarily unavailable (${e.message}). Please resend your reply shortly.`
+      addMessage('system', errorMsg, { emoji: '⚠️', stage: CONSULT_STAGES.ATTENDING })
     } finally {
       setLoading(false)
     }
@@ -256,17 +325,25 @@ ${history}
     }
 
     if (matchSummon && matchSummon[1]) {
-      const expertsRaw = matchSummon[1]
+      const expertsRaw = matchSummon[1].trim()
       writeLog(`[STAGE] Attending summoned experts: ${expertsRaw}`)
       
-      // 检测具体科室
+      // 检测具体科室 (支持直接英文 roleKey 或 中英文匹配)
       const rolesToInvite = []
+      const summonedKeys = expertsRaw.split(',').map(k => k.trim())
+
       Object.entries(DOCTOR_ROLES).forEach(([key, docRole]) => {
         if (key === 'general') return
         const nameZh = docRole.name_zh || ''
         const nameEn = docRole.name_en || ''
-        if (expertsRaw.includes(nameZh) || expertsRaw.includes(nameEn)) {
-          rolesToInvite.push(key)
+        
+        // 如果医生用 roleKey 明确指定或中英文名字包含
+        if (
+          summonedKeys.includes(key) ||
+          expertsRaw.includes(nameZh) || 
+          expertsRaw.includes(nameEn)
+        ) {
+          if (!rolesToInvite.includes(key)) rolesToInvite.push(key)
         }
       })
       
@@ -431,6 +508,7 @@ ${history}
       symptoms: '', intake_answers: '',
       invited_roles: [], opinions: {},
       disputes: [], consult_round: 0,
+      nurse_round: 0,
       rag_knowledge: '',
       patient_state: {
         symptoms: '', history: '', medications: '',

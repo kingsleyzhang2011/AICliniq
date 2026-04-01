@@ -23,16 +23,17 @@
 
 **绝对禁止**：引入任何需要付费的第三方服务、任何需要独立后端服务器的方案（全部走 Supabase + Vercel）、任何与上述架构冲突的新依赖。
 
-## AI 调用架构（四轨，src/services/ai.js，锁定）
-1. Gemini 2.0 Flash（默认主力）
-2. Groq + Llama/Qwen（限速 429 或超时 503 时 fallback）
+## AI 调用架构（三轨，src/services/ai.js，锁定）
+1. Gemini 2.5 Flash（默认主力）/ 2.5 Flash-Lite（护士轻量）
+2. Groq + Llama（限速 429 或超时 503 时 fallback）
 3. 硅基流动 Qwen2.5-7B（大陆备用，待机）
 - 401/403 错误不 fallback，直接抛出
 - 所有调用必须经过 `callWithFallback()`，禁止绕过
 
-### 模型版本锁定
-- **Gemini**：`gemini-2.0-flash` (默认)
-  - 2.5 Preview 版本需带完整版本号（如 `gemini-2.5-flash-preview-04-17`），裸写 `gemini-2.5-flash` 会 404。
+### 模型版本锁定（2026-03 更新）
+- **Gemini**：`gemini-2.5-flash`（默认主力）、`gemini-2.5-flash-lite`（护士/轻量任务）
+  - Gemini 2.0 Flash 已于 2026-02 废弃（退役 2026-06-01），禁止使用。
+  - 如需 2.5 Pro，使用 `gemini-2.5-pro`。
 - **Groq**：`llama-3.3-70b-versatile`
 - **SiliconFlow**：`Qwen/Qwen2.5-7B-Instruct`
 - **异常处理**：如遇模型 404/400 错误，必须先报告原因，**不得自行降级**。

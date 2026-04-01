@@ -17,7 +17,7 @@ export default {
   disclaimer: {
     tag: 'MUST READ',
     title: 'Medical Disclaimer',
-    content: 'AiCliniq Care and any content generated are for informational purposes only. The AI consultation opinions we provide cannot replace a formal, in-person diagnosis by a licensed physician. <strong>By continuing to use this system, you acknowledge and accept these terms.</strong>',
+    content: 'AiCliniq Care and any content generated are for informational purposes only. The AI consultation opinions we provide cannot replace a formal, in-person diagnosis by a licensed physician. By continuing to use this system, you acknowledge and accept these terms.',
     shortAuth: 'I understand: AiCliniq provides AI conversations and consultation opinions for reference only, not medical diagnosis. I agree to the Medical Disclaimer and assume all risks of use.',
     shortChat: 'This tool is AI-generated and does not constitute final medical advice. In emergencies, please call 911 or your local emergency number.'
   },
@@ -35,7 +35,7 @@ export default {
   auth: {
     emailLabel: 'Email Address',
     passwordLabel: 'Password',
-    emailPlaceholder: 'name@example.com',
+    emailPlaceholder: 'name{\'@\'}example.com',
     passwordPlaceholder: '••••••••',
     continueEmail: 'Continue with Email',
     toggleMagicLink: 'Use Magic Link (Passwordless)',

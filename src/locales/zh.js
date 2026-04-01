@@ -17,7 +17,7 @@ export default {
   disclaimer: {
     tag: '必读',
     title: '医学免责声明',
-    content: 'AiCliniq Care 及其生成的任何内容仅供参考。我们提供的 AI 会诊意见不能替代执业医师的正式面诊或医疗诊断。<strong>继续使用本系统即表示您已阅读并接受该条款。</strong>',
+    content: 'AiCliniq Care 及其生成的任何内容仅供参考。我们提供的 AI 会诊意见不能替代执业医师的正式面诊或医疗诊断。继续使用本系统即表示您已阅读并接受该条款。',
     shortAuth: '我已阅读并知晓：AiCliniq 提供的 AI 对话与会诊意见仅供参考，不能替代执业医师诊断。本人同意遵守《医疗免责声明》并自行承担使用风险。',
     shortChat: '本工具由 AI 生成，不构成最终医疗诊断建议。如有紧急情况，请拨打 120。'
   },
@@ -35,7 +35,7 @@ export default {
   auth: {
     emailLabel: '邮箱地址',
     passwordLabel: '密码',
-    emailPlaceholder: 'name@example.com',
+    emailPlaceholder: 'name{\'@\'}example.com',
     passwordPlaceholder: '••••••••',
     continueEmail: '使用邮箱继续',
     toggleMagicLink: '改用邮件链接登录（免密码）',
